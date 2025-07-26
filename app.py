@@ -25,6 +25,17 @@ def handle_callback():
 
 def show_dashboard():
     st.sidebar.success("Conectado à Conta Azul")
+    # 🔍 Diagnóstico opcional
+    with st.sidebar.expander("Diagnóstico (opcional)"):
+        st.write("company_id:", st.session_state.get("company_id"))
+        try:
+            from utils.token_store import get_tokens
+            row = get_tokens(st.session_state.get("company_id"))
+            if row:
+                st.write("expires_at:", row.get("expires_at"))
+        except Exception as e:
+            st.write("Erro ao ler tokens:", e)
+            
     st.title("📊 Dashboard MVP")
     
     st.caption("Você está pronto para testar a integração real com a API.")
