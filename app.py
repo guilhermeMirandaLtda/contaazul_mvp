@@ -25,6 +25,7 @@ def handle_callback():
 def show_dashboard():
     st.sidebar.success("Conectado à Conta Azul")
     st.title("📊 Dashboard MVP")
+    st.subheader("Bem-vindo ao Conta Azul MVP! v.1.0.0 👋")
     st.caption("Você está pronto para testar a integração real com a API.")
 
     col1, col2, col3 = st.columns(3)
@@ -43,7 +44,7 @@ def show_dashboard():
 
     render_produto_ui()
     # aqui futuramente: render_pessoa_ui(), render_venda_ui()
-    
+
 def main():
     st.sidebar.title("Conta Azul MVP")
     handle_callback()
