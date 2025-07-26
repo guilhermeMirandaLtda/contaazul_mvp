@@ -5,16 +5,11 @@ import streamlit as st
 from utils.token_store import has_valid_token, get_tokens
 from utils.oauth import refresh_access_token
 
-API_BASE = st.secrets["general"]["API_BASE_URL"]
+API_BASE = st.secrets["general"]["API_BASE_URL"]  # defina como https://api-v2.contaazul.com no secrets
 
 def _ensure_access_token() -> str:
-    """
-    Recupera um access_token válido do banco; renova via refresh se necessário.
-    Usa st.session_state['company_id'] quando disponível.
-    """
-    company_id = st.session_state.get("company_id")  # pode ser None -> cai no default do token_store
+    company_id = st.session_state.get("company_id")  # derivado do id_token.sub
     if not has_valid_token(company_id):
-        # Tenta renovar
         refresh_access_token(company_id)
     row = get_tokens(company_id)
     if not row:

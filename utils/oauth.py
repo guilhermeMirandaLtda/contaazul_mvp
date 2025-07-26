@@ -1,13 +1,12 @@
-# utils/oauth.py  (somente os trechos alterados/essenciais)
+# utils/oauth.py
 
 import base64
+import json
 import requests
 from urllib.parse import urlencode
 from streamlit import secrets
 from utils.token_store import upsert_tokens, get_tokens
-import streamlit as st
-from datetime import datetime, timedelta  # ✅ ADICIONE ISSO
-
+from datetime import datetime, timedelta
 
 AUTH_BASE = "https://auth.contaazul.com/oauth2"
 SCOPES = "openid profile aws.cognito.signin.user.admin"
@@ -28,13 +27,20 @@ def _basic_auth_header() -> dict:
     token = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
     return {"Authorization": f"Basic {token}"}
 
-def obter_company_id(access_token: str) -> str:
-    url = "https://api.contaazul.com/v1/empresa"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    resp = requests.get(url, headers=headers, timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
-    return data.get("id")
+def _jwt_payload(jwt_token: str) -> dict:
+    """
+    Decodifica (sem verificação de assinatura) o payload de um JWT para extrair claims como 'sub'.
+    """
+    try:
+        parts = jwt_token.split(".")
+        if len(parts) != 3:
+            return {}
+        # padding do base64 urlsafe
+        padded = parts[1] + "=" * (-len(parts[1]) % 4)
+        payload_json = base64.urlsafe_b64decode(padded.encode()).decode()
+        return json.loads(payload_json)
+    except Exception:
+        return {}
 
 def exchange_code_for_tokens(code: str, state: str | None = None, company_id: str | None = None) -> dict:
     data = {
@@ -55,27 +61,31 @@ def exchange_code_for_tokens(code: str, state: str | None = None, company_id: st
     refresh_token = payload["refresh_token"]
     expires_in = int(payload.get("expires_in", 3600))
 
-    # 🎯 Obter company_id com o access_token recém criado
-    try:
-        company_id_real = obter_company_id(access_token)
-    except Exception as e:
-        st.error(f"Erro ao consultar empresa: {e}")
-        # Ainda assim persiste tokens com company_id 'default' para permitir fluxo mínimo
-        company_id_real = None
+    # ✅ derive o identificador do "cliente" pelo id_token.sub (estável por usuário) — multi-cliente friendly
+    id_info = _jwt_payload(payload.get("id_token", "")) if payload.get("id_token") else {}
+    derived_company_id = (
+        company_id
+        or id_info.get("sub")
+        or id_info.get("cognito:username")
+        or id_info.get("username")
+        or "default"
+    )
 
-    # 🧠 Persistir no MySQL (com margem de renovação)
+    # 💾 persiste no MySQL (expiração salva já com margem proativa implementada no token_store)
     upsert_tokens(
         access_token=access_token,
         refresh_token=refresh_token,
         expires_in=expires_in,
         state=state,
-        company_id=company_id_real,
+        company_id=derived_company_id,
     )
 
-    # Retorne o conteúdo + company_id para o app guardar em sessão
-    return {**payload, "company_id": company_id_real}
+    return {**payload, "company_id": derived_company_id}
 
 def refresh_access_token(company_id: str | None = None) -> dict:
+    """
+    Usa o refresh_token da company_id (ou 'default') e atualiza no MySQL.
+    """
     tokens = get_tokens(company_id)
     if not tokens:
         raise RuntimeError("Refresh token não encontrado. Faça login novamente.")
@@ -96,7 +106,7 @@ def refresh_access_token(company_id: str | None = None) -> dict:
 
     upsert_tokens(
         access_token=payload["access_token"],
-        refresh_token=payload.get("refresh_token", tokens["refresh_token"]),
+        refresh_token=payload.get("refresh_token", tokens["refresh_token"]),  # pode rotacionar
         expires_in=int(payload.get("expires_in", 3600)),
         state=tokens.get("state"),
         company_id=company_id or tokens.get("company_id"),

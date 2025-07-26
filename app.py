@@ -16,9 +16,8 @@ def handle_callback():
     if code:
         with st.spinner("Trocando código por tokens..."):
             try:
-                result = exchange_code_for_tokens(code, state)  # não force company_id aqui
-                # Salva o company_id retornado (pode ser None se a consulta falhar)
-                st.session_state["company_id"] = result.get("company_id")
+                result = exchange_code_for_tokens(code, state)
+                st.session_state["company_id"] = result.get("company_id")  # ← salva o id derivado do id_token
                 st.success("Autenticação concluída com sucesso!")
                 st.query_params.clear()
             except Exception as e:
