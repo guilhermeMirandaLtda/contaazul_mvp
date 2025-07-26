@@ -57,6 +57,8 @@ def render_ui():
 
                 st.success(f"✅ Importação finalizada: {resultado['cadastrados']} novos cadastrados, {resultado['ignorados']} ignorados.")
                 
+                st.dataframe(resultado, use_container_width=True)
+
                 if resultado["erros"]:
                     with st.expander("⚠️ Visualizar Erros"):
                         st.dataframe(resultado["erros_df"])

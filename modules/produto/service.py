@@ -90,7 +90,6 @@ class ProdutoService:
         resultado_final = {"status": "ok", "resumo": resultados}
         if erros:
             buffer = io.BytesIO()
-            pd.DataFrame(erros).to_excel(buffer, index=False)
             buffer.seek(0)
             resultado_final["arquivo_erros"] = buffer
         return resultado_final
