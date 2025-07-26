@@ -121,9 +121,6 @@ class ProdutoService:
         return True, resp  # mantenho contrato (sucesso, mensagem/objeto)
 
     def processar_upload(self, arquivo_excel):
-        if not has_valid_token():
-            # tokens são geridos por ca_api/token_store; se chegar aqui sem token, peça login.
-            raise RuntimeError("Token de acesso inválido ou expirado. Faça login novamente.")
 
         df = pd.read_excel(arquivo_excel)
         erros_planilha = self.validar_planilha(df)
