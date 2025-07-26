@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from utils.mysql_conn import get_connection
+from utils.token_store import get_tokens
 
 _DEFAULT_COMPANY_ID = "default"
 _REFRESH_MARGIN_SEC = 90  # renova antes de expirar

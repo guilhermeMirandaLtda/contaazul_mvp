@@ -6,6 +6,7 @@ from urllib.parse import urlencode
 from streamlit import secrets
 from utils.token_store import upsert_tokens, get_tokens
 import streamlit as st
+from utils.token_store import save_tokens
 
 AUTH_BASE = "https://auth.contaazul.com/oauth2"
 SCOPES = "openid profile aws.cognito.signin.user.admin"
@@ -26,6 +27,20 @@ def _basic_auth_header() -> dict:
     token = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
     return {"Authorization": f"Basic {token}"}
 
+def obter_company_id(access_token: str) -> str:
+    url = "https://api.contaazul.com/v1/empresa"
+    headers = {
+        "Authorization": f"Bearer {access_token}"
+    }
+    response = requests.get(url, headers=headers, timeout=30)
+    
+    if response.status_code == 200:
+        data = response.json()
+        return data.get("id")  # company_id
+    else:
+        raise Exception(f"Erro ao obter company_id: {response.status_code} - {response.text}")
+
+
 def exchange_code_for_tokens(code: str, state: str | None = None, company_id: str | None = None) -> dict:
     data = {
         "grant_type": "authorization_code",
@@ -42,8 +57,9 @@ def exchange_code_for_tokens(code: str, state: str | None = None, company_id: st
     payload = resp.json()
 
     access_token = payload["access_token"]
-    print(payload)
-    st.write(payload)
+    refresh_token = payload["refresh_token"]
+    expires_in = payload["expires_in"]
+    expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
 
     # 🎯 Consultar empresa para pegar o company_id real
     empresa_headers = {
@@ -58,7 +74,8 @@ def exchange_code_for_tokens(code: str, state: str | None = None, company_id: st
     empresa_data = empresa_resp.json()
 
 
-    company_id = empresa_data.get("id")
+    company_id = obter_company_id(access_token)  # vamos já te mostrar como implementar essa função
+    save_tokens(company_id, access_token, refresh_token, expires_at)
 
     # 🧠 Salvar tudo no banco
     upsert_tokens(
