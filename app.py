@@ -52,6 +52,9 @@ def main():
             st.session_state.oauth_state = uuid.uuid4().hex
         auth_url = build_auth_url(st.session_state.oauth_state)
         st.link_button("Conectar com Conta Azul", auth_url, type="primary")
+
+        st.write("URL de autorização gerada:")
+        st.code(auth_url)
     else:
         show_dashboard()
 

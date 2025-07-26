@@ -15,17 +15,15 @@ SCOPES = "openid profile aws.cognito.signin.user.admin"
 SCOPES = "openid profile aws.cognito.signin.user.admin"
 
 def build_auth_url(state):
-    from urllib.parse import urlencode
-    from streamlit import secrets
-
-    qs = urlencode({
+    query_params = {
         "response_type": "code",
         "client_id": secrets["contaazul"]["client_id"],
         "redirect_uri": secrets["contaazul"]["redirect_uri"],
         "state": state,
-        "scope": SCOPES.replace(" ", "+")
-    })
-    return f"https://auth.contaazul.com/oauth2/authorize?{qs}"
+        "scope": SCOPES
+    }
+
+    return f"https://auth.contaazul.com/oauth2/authorize?{urlencode(query_params)}"
 
 
 def _auth_header():
