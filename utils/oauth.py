@@ -9,8 +9,15 @@ from utils.token_store import upsert_tokens, get_tokens
 
 AUTH_BASE = "https://auth.contaazul.com/oauth2"
 SCOPES = "openid profile aws.cognito.signin.user.admin"
+SCOPES = "openid profile aws.cognito.signin.user.admin"
+
+
+SCOPES = "openid profile aws.cognito.signin.user.admin"
 
 def build_auth_url(state):
+    from urllib.parse import urlencode
+    from streamlit import secrets
+
     qs = urlencode({
         "response_type": "code",
         "client_id": secrets["contaazul"]["client_id"],
@@ -18,7 +25,8 @@ def build_auth_url(state):
         "state": state,
         "scope": SCOPES.replace(" ", "+")
     })
-    return f"{AUTH_BASE}/authorize?{qs}"
+    return f"https://auth.contaazul.com/oauth2/authorize?{qs}"
+
 
 def _auth_header():
     client_id = secrets["contaazul"]["client_id"]
