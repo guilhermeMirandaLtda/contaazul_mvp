@@ -70,27 +70,48 @@ class ProdutoService:
         df = pd.read_excel(arquivo_excel)
         erros_planilha = self.validar_planilha(df)
         if erros_planilha:
-            return {"status": "erro", "mensagem": "Erros na planilha", "detalhes": erros_planilha}
+            return {"status": "erro", "mensagem": "Erros na planilha", "resumo": [], "erros": erros_planilha}
 
         resultados = []
-        erros = []
 
-        for _, row in df.iterrows():
+        for i, row in df.iterrows():
             nome = row.get("nome")
             sku = row.get("codigo_sku")
-            if self.verificar_existencia(nome, sku):
-                resultados.append({"produto": nome, "status": "ignorado", "motivo": "Já existe"})
-                continue
-            try:
-                sucesso, msg = self.cadastrar_produto(row)
-                resultados.append({"produto": nome, "status": "cadastrado", "mensagem": msg})
-            except Exception as e:
-                erros.append({"produto": nome, "status": "erro", "mensagem": str(e)})
 
-        resultado_final = {"status": "ok", "resumo": resultados}
-        if erros:
-            buffer = io.BytesIO()
-            buffer.seek(0)
-            resultado_final["arquivo_erros"] = buffer
-        return resultado_final
+            # Checar se já existe
+            if self.verificar_existencia(nome, sku):
+                resultados.append({
+                    "produto": nome,
+                    "sku": sku,
+                    "status": "Ignorado",
+                    "mensagem": "Já existe"
+                })
+                continue
+
+            try:
+                # Formatar números
+                for campo in [
+                    "valor_venda", "custo_medio", "estoque_disponivel",
+                    "estoque_minimo", "estoque_maximo",
+                    "altura", "largura", "profundidade"
+                ]:
+                    row[campo] = float(str(row.get(campo)).replace(",", "."))
+
+                sucesso, msg = self.cadastrar_produto(row)
+                status = "Cadastrado" if sucesso else "Erro"
+                resultados.append({
+                    "produto": nome,
+                    "sku": sku,
+                    "status": status,
+                    "mensagem": msg
+                })
+            except Exception as e:
+                resultados.append({
+                    "produto": nome,
+                    "sku": sku,
+                    "status": "Erro",
+                    "mensagem": str(e)
+                })
+
+        return {"status": "ok", "resumo": resultados, "erros": []}
 

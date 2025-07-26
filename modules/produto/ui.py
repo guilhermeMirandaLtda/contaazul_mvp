@@ -53,14 +53,22 @@ def render_ui():
             st.info("📊 Processando arquivo...")
 
             try:
-                resultado = ProdutoService.processar_upload(uploaded_file)
+                token = st.session_state.get("access_token")
+                if not token:
+                    st.error("Token não encontrado.")
+                    return
 
-                st.success(f"✅ Importação finalizada: {resultado['cadastrados']} novos cadastrados, {resultado['ignorados']} ignorados.")
-                
-                st.dataframe(resultado, use_container_width=True)
+                service = ProdutoService(token)
+                resultado = service.processar_upload(uploaded_file)
 
-                if resultado["erros"]:
-                    with st.expander("⚠️ Visualizar Erros"):
-                        st.dataframe(resultado["erros_df"])
+                if resultado["status"] == "erro":
+                    st.error("❌ Erros encontrados na planilha:")
+                    for erro in resultado["erros"]:
+                        st.write(f"- {erro}")
+                else:
+                    resumo_df = pd.DataFrame(resultado["resumo"])
+                    st.success("✅ Importação finalizada com sucesso.")
+                    st.dataframe(resumo_df, use_container_width=True)
+
             except Exception as e:
                 st.error(f"❌ Erro ao processar planilha: {e}")
