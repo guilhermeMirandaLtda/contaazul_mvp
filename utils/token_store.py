@@ -1,50 +1,62 @@
 # utils/token_store.py
 
-import os
-import json
-import tempfile
 from datetime import datetime, timedelta
-from cryptography.fernet import Fernet
+from typing import Optional, Dict, Any
+from utils.mysql_conn import get_connection
 
-# Caminho do arquivo temporário seguro
-TOKEN_FILE = os.path.join(tempfile.gettempdir(), "contaazul_tokens.enc")
+_DEFAULT_COMPANY_ID = "default"
+_REFRESH_MARGIN_SEC = 90  # renova antes de expirar
 
-# Chave secreta (ideal carregar de st.secrets ou variável de ambiente)
-SECRET_KEY = os.environ.get("TOKEN_SECRET_KEY", Fernet.generate_key().decode())
-fernet = Fernet(SECRET_KEY.encode())
+def _ensure_table():
+    sql = """
+    CREATE TABLE IF NOT EXISTS tokens (
+        company_id VARCHAR(100) PRIMARY KEY,
+        access_token TEXT NOT NULL,
+        refresh_token TEXT NOT NULL,
+        expires_at DATETIME NOT NULL,
+        state VARCHAR(128) NULL,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                   ON UPDATE CURRENT_TIMESTAMP,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql)
 
-def _save_tokens(data):
-    data["expires_at"] = data["expires_at"].isoformat()
-    encrypted = fernet.encrypt(json.dumps(data).encode())
-    with open(TOKEN_FILE, "wb") as f:
-        f.write(encrypted)
+def upsert_tokens(
+    access_token: str,
+    refresh_token: str,
+    expires_in: int,
+    state: Optional[str] = None,
+    company_id: Optional[str] = None,
+) -> None:
+    _ensure_table()
+    company_id = company_id or _DEFAULT_COMPANY_ID
+    expires_at = datetime.utcnow() + timedelta(seconds=max(60, int(expires_in) - _REFRESH_MARGIN_SEC))
+    sql = """
+    INSERT INTO tokens (company_id, access_token, refresh_token, expires_at, state)
+    VALUES (%s, %s, %s, %s, %s)
+    ON DUPLICATE KEY UPDATE
+        access_token = VALUES(access_token),
+        refresh_token = VALUES(refresh_token),
+        expires_at   = VALUES(expires_at),
+        state        = VALUES(state)
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (company_id, access_token, refresh_token, expires_at, state))
 
-def _load_tokens():
-    if not os.path.exists(TOKEN_FILE):
-        return None
-    try:
-        with open(TOKEN_FILE, "rb") as f:
-            encrypted = f.read()
-        data = json.loads(fernet.decrypt(encrypted).decode())
-        data["expires_at"] = datetime.fromisoformat(data["expires_at"])
-        return data
-    except Exception:
-        return None
+def get_tokens(company_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    _ensure_table()
+    company_id = company_id or _DEFAULT_COMPANY_ID
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM tokens WHERE company_id=%s", (company_id,))
+            return cur.fetchone()
 
-def upsert_tokens(access_token, refresh_token, expires_in, state=None, company_id=None):
-    expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
-    tokens = {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "expires_at": expires_at,
-        "state": state,
-        "company_id": company_id,
-    }
-    _save_tokens(tokens)
-
-def get_tokens():
-    return _load_tokens()
-
-def has_valid_token():
-    tokens = _load_tokens()
-    return tokens and tokens["expires_at"] > datetime.utcnow()
+def has_valid_token(company_id: Optional[str] = None) -> bool:
+    row = get_tokens(company_id)
+    if not row:
+        return False
+    return row["expires_at"] > datetime.utcnow()

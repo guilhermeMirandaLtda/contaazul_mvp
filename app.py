@@ -16,7 +16,7 @@ def handle_callback():
     if code:
         with st.spinner("Trocando código por tokens..."):
             try:
-                exchange_code_for_tokens(code, state)
+                exchange_code_for_tokens(code, state, company_id="minha_empresa")
                 st.success("Autenticação concluída com sucesso!")
                 st.query_params.clear()
             except Exception as e:
@@ -52,7 +52,7 @@ def main():
     if not has_valid_token():
         st.sidebar.warning("Desconectado")
         st.title("💙 Conectar com a API Conta Azul")
-        st.subheader("Bem-vindo ao Conta Azul MVP! v.1.0.8👋")
+        st.subheader("Bem-vindo ao Conta Azul MVP! v.1.0.10👋")
         st.markdown("Clique no botão abaixo para autorizar o acesso.")
         if "oauth_state" not in st.session_state:
             st.session_state.oauth_state = uuid.uuid4().hex
