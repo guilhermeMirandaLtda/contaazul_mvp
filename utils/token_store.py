@@ -35,8 +35,8 @@ def upsert_tokens(
     company_id = company_id or _DEFAULT_COMPANY_ID
     expires_at = datetime.utcnow() + timedelta(seconds=max(60, int(expires_in) - _REFRESH_MARGIN_SEC))
     sql = """
-    INSERT INTO tokens (company_id, access_token, refresh_token, expires_at, state)
-    VALUES (%s, %s, %s, %s, %s)
+    INSERT INTO tokens (company_id, access_token, refresh_token, expires_at)
+    VALUES (%s, %s, %s, %s)
     ON DUPLICATE KEY UPDATE
         access_token = VALUES(access_token),
         refresh_token = VALUES(refresh_token),
