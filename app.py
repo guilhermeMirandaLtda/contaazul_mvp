@@ -50,18 +50,30 @@ def main():
     st.sidebar.title("Conta Azul MVP")
     handle_callback()
 
+    # 🔐 Garantia: se a sessão ainda não tem company_id (ex.: cold start), buscamos no banco
+    if not st.session_state.get("company_id"):
+        try:
+            from utils.token_store import get_any_company_id
+            cid = get_any_company_id()
+            if cid:
+                st.session_state["company_id"] = cid
+        except Exception as e:
+            # silencioso; seguimos para a tela de login se não houver token
+            pass
+
     company_id = st.session_state.get("company_id")
     if not has_valid_token(company_id):
         st.sidebar.warning("Desconectado")
         st.title("💙 Conectar com a API Conta Azul")
-        st.subheader("Bem-vindo ao Conta Azul MVP! v.1.0.11👋")
         st.markdown("Clique no botão abaixo para autorizar o acesso.")
         if "oauth_state" not in st.session_state:
             st.session_state.oauth_state = uuid.uuid4().hex
         auth_url = build_auth_url(st.session_state.oauth_state)
         st.link_button("Conectar com Conta Azul", auth_url, type="primary")
-        st.write("URL de autorização gerada:")
-        st.code(auth_url)
+
+        # (opcional) debug: mostre a URL
+        # st.write("URL de autorização gerada:")
+        # st.code(auth_url)
     else:
         show_dashboard()
 

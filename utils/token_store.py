@@ -9,6 +9,23 @@ _DEFAULT_COMPANY_ID = "default"
 _REFRESH_MARGIN_SEC = 90  # renova antes de expirar
 
 def _ensure_table():
+    """
+    Ensures that the "tokens" table exists in the MySQL database.
+    
+    This function creates the table if it does not exist, and does nothing if it already exists.
+    
+    The table has the following columns:
+    
+    - company_id: a unique identifier for the company (VARCHAR(100), PRIMARY KEY)
+    - access_token: the access token for ContaAzul API (TEXT, NOT NULL)
+    - refresh_token: the refresh token for ContaAzul API (TEXT, NOT NULL)
+    - expires_at: the datetime when the access token expires (DATETIME, NOT NULL)
+    - state: an optional state parameter (VARCHAR(128), NULL)
+    - updated_at: the datetime when the token was last updated (DATETIME, NOT NULL, DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)
+    - created_at: the datetime when the token was created (DATETIME, NOT NULL, DEFAULT CURRENT_TIMESTAMP)
+    
+    The table uses the InnoDB engine and utf8mb4 charset.
+    """
     sql = """
     CREATE TABLE IF NOT EXISTS tokens (
         company_id VARCHAR(100) PRIMARY KEY,
@@ -61,3 +78,16 @@ def has_valid_token(company_id: Optional[str] = None) -> bool:
     if not row:
         return False
     return row["expires_at"] > datetime.utcnow()
+
+
+def get_any_company_id() -> Optional[str]:
+    """
+    Retorna um company_id existente (o mais recentemente atualizado) para casos em que
+    a sessão ainda não tenha st.session_state['company_id'] (ex.: cold start da nuvem).
+    """
+    _ensure_table()
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT company_id FROM tokens ORDER BY updated_at DESC LIMIT 1")
+            row = cur.fetchone()
+            return row["company_id"] if row else None
