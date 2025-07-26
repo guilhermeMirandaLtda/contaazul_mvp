@@ -40,14 +40,33 @@ def exchange_code_for_tokens(code: str, state: str | None = None, company_id: st
     resp.raise_for_status()
     payload = resp.json()
 
+    access_token = payload["access_token"]
+
+    # 🎯 Consultar empresa para pegar o company_id real
+    empresa_headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+    }
+    empresa_resp = requests.get("https://api.contaazul.com/v1/empresa", headers=empresa_headers, timeout=30)
+    empresa_resp.raise_for_status()
+    empresa_data = empresa_resp.json()
+
+    company_id = empresa_data.get("id")
+
+    # 🧠 Salvar tudo no banco
     upsert_tokens(
-        access_token=payload["access_token"],
+        access_token=access_token,
         refresh_token=payload["refresh_token"],
-        expires_in=int(payload.get("expires_in", 3600)),  # ← cast importante
+        expires_in=int(payload.get("expires_in", 3600)),
         state=state,
         company_id=company_id,
     )
-    return payload
+
+    return {
+        **payload,
+        "company_id": company_id
+    }
+
 
 def refresh_access_token(company_id: str | None = None) -> dict:
     tokens = get_tokens(company_id)
