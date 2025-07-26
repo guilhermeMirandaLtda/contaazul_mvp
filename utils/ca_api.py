@@ -19,3 +19,14 @@ def api_get(path, params=None):
     r = requests.get(url, headers=headers, params=params, timeout=30)
     r.raise_for_status()
     return r.json()
+
+def api_post(path, json=None):
+    token = _ensure_token()
+    url = f"{API_BASE}{path}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    r = requests.post(url, headers=headers, json=json or {}, timeout=30)
+    r.raise_for_status()
+    return r.json()
