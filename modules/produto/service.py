@@ -1,7 +1,6 @@
 # modules/produto/service.py
 
 import pandas as pd
-import io
 import re
 from utils.ca_api import api_get, api_post
 from utils.token_store import has_valid_token
@@ -18,55 +17,114 @@ class ProdutoService:
         "descricao", "titulo_seo", "url_seo"
     ]
 
-    def __init__(self, token):
+    def __init__(self, token=None):
+        # token mantido como opcional para não quebrar chamadas antigas; não é usado.
         self.token = token
 
-    def str_para_bool(self, valor):
-        return str(valor).strip().upper() in ["VERDADEIRO", "TRUE", "SIM"]
+    @staticmethod
+    def _to_float(val):
+        """
+        Converte valores numéricos de planilha:
+        - '99,9' -> 99.9
+        - ''/None -> 0.0
+        - '  10 ' -> 10.0
+        """
+        if val is None:
+            return 0.0
+        s = str(val).strip()
+        if s == "" or s.lower() == "nan":
+            return 0.0
+        s = s.replace(".", "").replace(",", ".") if re.match(r"^\d{1,3}(\.\d{3})*(,\d+)?$", s) else s.replace(",", ".")
+        try:
+            return float(s)
+        except Exception:
+            return 0.0
 
-    def validar_planilha(self, df):
+    @staticmethod
+    def _to_bool(val):
+        return str(val).strip().upper() in {"VERDADEIRO", "TRUE", "SIM", "1", "YES"}
+
+    def validar_planilha(self, df: pd.DataFrame):
         df.columns = df.columns.str.strip().str.lower()
         erros = []
         for campo in self.CAMPOS_OBRIGATORIOS:
             if campo not in df.columns:
                 erros.append(f"Campo obrigatório ausente: {campo}")
+        if len(df) > 500:
+            erros.append("Limite máximo de 500 linhas por importação.")
         return erros
 
-    def verificar_existencia(self, nome, sku):
-        # Simulação de API - ajustar para usar api_get real
-        return False  # Assume produto não existe
+    def verificar_existencia(self, nome: str, sku: str) -> bool:
+        """
+        Verifica existência por SKU e, em fallback, por nome.
+        Considera normalização de espaços/case.
+        """
+        nome_norm = re.sub(r"\s+", " ", (nome or "").strip()).lower()
+        sku_norm = (sku or "").strip()
 
-    def cadastrar_produto(self, produto):
-        payload = {
+        # 1) Tenta por SKU (mais confiável)
+        try:
+            resp = api_get("/v1/produto/busca", params={"codigo_sku": sku_norm}) if sku_norm else {}
+            itens = resp.get("data", resp) if isinstance(resp, dict) else resp
+            if isinstance(itens, list) and len(itens) > 0:
+                return True
+        except Exception:
+            pass
+
+        # 2) Fallback por nome
+        try:
+            if nome_norm:
+                resp = api_get("/v1/produto/busca", params={"nome": nome_norm})
+                itens = resp.get("data", resp) if isinstance(resp, dict) else resp
+                if isinstance(itens, list):
+                    for p in itens:
+                        n = str(p.get("nome", "")).strip().lower()
+                        if n == nome_norm:
+                            return True
+        except Exception:
+            pass
+
+        return False
+
+    def _payload_produto(self, produto: dict) -> dict:
+        return {
             "nome": produto["nome"],
             "codigo_sku": produto["codigo_sku"],
             "codigo_ean": produto.get("codigo_ean", ""),
             "observacao": produto.get("observacao", ""),
-            "formato": produto["formato"],
+            "formato": produto["formato"],  # "SIMPLES" ou "VARIACAO"
             "estoque": {
-                "valor_venda": float(produto["valor_venda"]),
-                "custo_medio": float(produto["custo_medio"]),
-                "estoque_disponivel": float(produto["estoque_disponivel"]),
-                "estoque_minimo": float(produto["estoque_minimo"]),
-                "estoque_maximo": float(produto["estoque_maximo"]),
+                "valor_venda": self._to_float(produto["valor_venda"]),
+                "custo_medio": self._to_float(produto["custo_medio"]),
+                "estoque_disponivel": self._to_float(produto["estoque_disponivel"]),
+                "estoque_minimo": self._to_float(produto["estoque_minimo"]),
+                "estoque_maximo": self._to_float(produto["estoque_maximo"]),
             },
             "dimensao": {
-                "altura": float(produto["altura"]),
-                "largura": float(produto["largura"]),
-                "profundidade": float(produto["profundidade"]),
+                "altura": self._to_float(produto["altura"]),
+                "largura": self._to_float(produto["largura"]),
+                "profundidade": self._to_float(produto["profundidade"]),
             },
             "ecommerce": {
                 "condicao": produto.get("condicao", "NOVO"),
-                "integracao_habilitada": self.str_para_bool(produto.get("integracao_habilitada", "FALSO")),
+                "integracao_habilitada": self._to_bool(produto.get("integracao_habilitada", False)),
                 "descricao": produto.get("descricao", ""),
                 "titulo_seo": produto.get("titulo_seo", ""),
                 "url_seo": produto.get("url_seo", ""),
             }
         }
-        # Simulação de envio - substituir por api_post
-        return True, "Cadastrado com sucesso"
+
+    def cadastrar_produto(self, produto: dict):
+        payload = self._payload_produto(produto)
+        # Chamada real à API v2 (ajuste o endpoint caso seu contrato use outro path):
+        resp = api_post("/v1/produto", json=payload)
+        return True, resp  # mantenho contrato (sucesso, mensagem/objeto)
 
     def processar_upload(self, arquivo_excel):
+        if not has_valid_token():
+            # tokens são geridos por ca_api/token_store; se chegar aqui sem token, peça login.
+            raise RuntimeError("Token de acesso inválido ou expirado. Faça login novamente.")
+
         df = pd.read_excel(arquivo_excel)
         erros_planilha = self.validar_planilha(df)
         if erros_planilha:
@@ -74,36 +132,38 @@ class ProdutoService:
 
         resultados = []
 
-        for i, row in df.iterrows():
-            nome = row.get("nome")
-            sku = row.get("codigo_sku")
+        for _, row in df.iterrows():
+            produto = {k: row.get(k) for k in df.columns}
+            nome = produto.get("nome")
+            sku = produto.get("codigo_sku")
 
-            # Checar se já existe
-            if self.verificar_existencia(nome, sku):
+            # 1) Existência
+            try:
+                if self.verificar_existencia(nome, sku):
+                    resultados.append({
+                        "produto": nome,
+                        "sku": sku,
+                        "status": "Ignorado",
+                        "mensagem": "Já existe (encontrado por SKU/Nome)."
+                    })
+                    continue
+            except Exception as e:
                 resultados.append({
                     "produto": nome,
                     "sku": sku,
-                    "status": "Ignorado",
-                    "mensagem": "Já existe"
+                    "status": "Erro",
+                    "mensagem": f"Falha ao verificar existência: {e}"
                 })
                 continue
 
+            # 2) Cadastro
             try:
-                # Formatar números
-                for campo in [
-                    "valor_venda", "custo_medio", "estoque_disponivel",
-                    "estoque_minimo", "estoque_maximo",
-                    "altura", "largura", "profundidade"
-                ]:
-                    row[campo] = float(str(row.get(campo)).replace(",", "."))
-
-                sucesso, msg = self.cadastrar_produto(row)
-                status = "Cadastrado" if sucesso else "Erro"
+                ok, msg = self.cadastrar_produto(produto)
                 resultados.append({
                     "produto": nome,
                     "sku": sku,
-                    "status": status,
-                    "mensagem": msg
+                    "status": "Cadastrado" if ok else "Erro",
+                    "mensagem": msg if isinstance(msg, str) else "OK"
                 })
             except Exception as e:
                 resultados.append({
@@ -114,4 +174,3 @@ class ProdutoService:
                 })
 
         return {"status": "ok", "resumo": resultados, "erros": []}
-

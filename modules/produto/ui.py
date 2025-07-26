@@ -53,12 +53,8 @@ def render_ui():
             st.info("📊 Processando arquivo...")
 
             try:
-                token = st.session_state.get("access_token")
-                if not token:
-                    st.error("Token não encontrado.")
-                    return
-
-                service = ProdutoService(token)
+                # ✅ Não precisamos mais de token na sessão; ca_api garante o Bearer válido.
+                service = ProdutoService()
                 resultado = service.processar_upload(uploaded_file)
 
                 if resultado["status"] == "erro":
