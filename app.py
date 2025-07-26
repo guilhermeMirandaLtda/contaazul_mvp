@@ -5,6 +5,7 @@ import uuid
 from utils.token_store import has_valid_token
 from utils.oauth import build_auth_url, exchange_code_for_tokens
 from utils.ca_api import api_get
+from modules.produto.ui import render_ui as render_produto_ui
 
 st.set_page_config(page_title="Conta Azul MVP", page_icon="💙", layout="wide")
 
@@ -40,6 +41,9 @@ def show_dashboard():
     with col3:
         st.button("🧾 Emitir Nota Fiscal (em breve)")
 
+    render_produto_ui()
+    # aqui futuramente: render_pessoa_ui(), render_venda_ui()
+    
 def main():
     st.sidebar.title("Conta Azul MVP")
     handle_callback()
