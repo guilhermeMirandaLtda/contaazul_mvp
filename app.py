@@ -25,7 +25,7 @@ def handle_callback():
 def show_dashboard():
     st.sidebar.success("Conectado à Conta Azul")
     st.title("📊 Dashboard MVP")
-    st.subheader("Bem-vindo ao Conta Azul MVP! v.1.0.6 👋")
+    st.write("Bem-vindo ao Conta Azul MVP! v.1.0.6 👋")
     st.caption("Você está pronto para testar a integração real com a API.")
 
     col1, col2, col3 = st.columns(3)
