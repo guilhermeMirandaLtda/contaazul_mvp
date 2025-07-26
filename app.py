@@ -16,7 +16,9 @@ def handle_callback():
     if code:
         with st.spinner("Trocando código por tokens..."):
             try:
-                exchange_code_for_tokens(code, state, company_id="minha_empresa")
+                result = exchange_code_for_tokens(code, state)  # não force company_id aqui
+                # Salva o company_id retornado (pode ser None se a consulta falhar)
+                st.session_state["company_id"] = result.get("company_id")
                 st.success("Autenticação concluída com sucesso!")
                 st.query_params.clear()
             except Exception as e:
@@ -49,7 +51,8 @@ def main():
     st.sidebar.title("Conta Azul MVP")
     handle_callback()
 
-    if not has_valid_token():
+    company_id = st.session_state.get("company_id")
+    if not has_valid_token(company_id):
         st.sidebar.warning("Desconectado")
         st.title("💙 Conectar com a API Conta Azul")
         st.subheader("Bem-vindo ao Conta Azul MVP! v.1.0.11👋")
@@ -58,11 +61,11 @@ def main():
             st.session_state.oauth_state = uuid.uuid4().hex
         auth_url = build_auth_url(st.session_state.oauth_state)
         st.link_button("Conectar com Conta Azul", auth_url, type="primary")
-
         st.write("URL de autorização gerada:")
         st.code(auth_url)
     else:
         show_dashboard()
+
 
 if __name__ == "__main__":
     main()
