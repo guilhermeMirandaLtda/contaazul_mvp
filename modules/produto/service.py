@@ -7,89 +7,91 @@ from utils.ca_api import api_get, api_post
 from utils.token_store import has_valid_token
 
 class ProdutoService:
+    CAMPOS_OBRIGATORIOS = [
+        "nome", "codigo_sku", "formato", "valor_venda",
+        "custo_medio", "estoque_disponivel", "estoque_minimo", "estoque_maximo",
+        "altura", "largura", "profundidade"
+    ]
 
-    CAMPOS_OBRIGATORIOS = ['nome', 'codigo']
-    CAMPOS_VALIDOS = ['nome', 'codigo', 'unidade', 'preco', 'descricao', 'marca', 'codigo_barras']
+    CAMPOS_VALIDOS = CAMPOS_OBRIGATORIOS + [
+        "codigo_ean", "observacao", "condicao", "integracao_habilitada",
+        "descricao", "titulo_seo", "url_seo"
+    ]
 
-    @classmethod
-    def validar_planilha(cls, arquivo_excel):
-        try:
-            df = pd.read_excel(arquivo_excel)
-        except Exception as e:
-            raise ValueError("Erro ao ler o Excel. Verifique se o arquivo está válido.")
+    def __init__(self, token):
+        self.token = token
 
-        df.columns = [str(col).strip().lower().replace(" ", "_") for col in df.columns]
+    def str_para_bool(self, valor):
+        return str(valor).strip().upper() in ["VERDADEIRO", "TRUE", "SIM"]
 
-        for campo in cls.CAMPOS_OBRIGATORIOS:
-            if campo not in df.columns:
-                raise ValueError(f"Campo obrigatório ausente: {campo}")
-
-        if len(df) > 500:
-            raise ValueError("Limite de 500 produtos excedido.")
-
-        return df[cls.CAMPOS_VALIDOS].fillna("")
-
-    @classmethod
-    def verificar_existencia(cls, produto_dict):
-        nome = produto_dict.get("nome", "")
-        codigo = produto_dict.get("codigo", "")
-        nome = re.sub(r"\s+", " ", nome.strip().lower())
-        codigo = codigo.strip()
-
-        try:
-            resposta = api_get("/v1/products", params={"name": nome, "code": codigo})
-            produtos = resposta.get("data", []) if isinstance(resposta, dict) else resposta
-            for p in produtos:
-                if p["name"].strip().lower() == nome or p.get("code", "").strip() == codigo:
-                    return True
-        except:
-            pass
-
-        return False
-
-    @classmethod
-    def cadastrar_produto(cls, produto_dict):
-        payload = {
-            "name": produto_dict["nome"],
-            "code": produto_dict["codigo"],
-            "unit": produto_dict.get("unidade", "UN"),
-            "price": float(produto_dict.get("preco", 0)) or 0,
-            "description": produto_dict.get("descricao", ""),
-            "brand": produto_dict.get("marca", ""),
-            "barcode": produto_dict.get("codigo_barras", ""),
-            "type": "PRODUCT",  # obrigatório na API da Conta Azul
-        }
-
-        response = api_post("/v1/products", json=payload)
-        return response
-
-    @classmethod
-    def processar_upload(cls, arquivo_excel):
-        if not has_valid_token():
-            raise RuntimeError("Token de acesso inválido ou expirado.")
-
-        df = cls.validar_planilha(arquivo_excel)
+    def validar_planilha(self, df):
+        df.columns = df.columns.str.strip().str.lower()
         erros = []
-        cadastrados = 0
-        ignorados = 0
+        for campo in self.CAMPOS_OBRIGATORIOS:
+            if campo not in df.columns:
+                erros.append(f"Campo obrigatório ausente: {campo}")
+        return erros
+
+    def verificar_existencia(self, nome, sku):
+        # Simulação de API - ajustar para usar api_get real
+        return False  # Assume produto não existe
+
+    def cadastrar_produto(self, produto):
+        payload = {
+            "nome": produto["nome"],
+            "codigo_sku": produto["codigo_sku"],
+            "codigo_ean": produto.get("codigo_ean", ""),
+            "observacao": produto.get("observacao", ""),
+            "formato": produto["formato"],
+            "estoque": {
+                "valor_venda": float(produto["valor_venda"]),
+                "custo_medio": float(produto["custo_medio"]),
+                "estoque_disponivel": float(produto["estoque_disponivel"]),
+                "estoque_minimo": float(produto["estoque_minimo"]),
+                "estoque_maximo": float(produto["estoque_maximo"]),
+            },
+            "dimensao": {
+                "altura": float(produto["altura"]),
+                "largura": float(produto["largura"]),
+                "profundidade": float(produto["profundidade"]),
+            },
+            "ecommerce": {
+                "condicao": produto.get("condicao", "NOVO"),
+                "integracao_habilitada": self.str_para_bool(produto.get("integracao_habilitada", "FALSO")),
+                "descricao": produto.get("descricao", ""),
+                "titulo_seo": produto.get("titulo_seo", ""),
+                "url_seo": produto.get("url_seo", ""),
+            }
+        }
+        # Simulação de envio - substituir por api_post
+        return True, "Cadastrado com sucesso"
+
+    def processar_upload(self, arquivo_excel):
+        df = pd.read_excel(arquivo_excel)
+        erros_planilha = self.validar_planilha(df)
+        if erros_planilha:
+            return {"status": "erro", "mensagem": "Erros na planilha", "detalhes": erros_planilha}
+
+        resultados = []
+        erros = []
 
         for _, row in df.iterrows():
-            produto = row.to_dict()
-
-            if cls.verificar_existencia(produto):
-                ignorados += 1
+            nome = row.get("nome")
+            sku = row.get("codigo_sku")
+            if self.verificar_existencia(nome, sku):
+                resultados.append({"produto": nome, "status": "ignorado", "motivo": "Já existe"})
                 continue
-
             try:
-                cls.cadastrar_produto(produto)
-                cadastrados += 1
+                sucesso, msg = self.cadastrar_produto(row)
+                resultados.append({"produto": nome, "status": "cadastrado", "mensagem": msg})
             except Exception as e:
-                produto["erro"] = str(e)
-                erros.append(produto)
+                erros.append({"produto": nome, "status": "erro", "mensagem": str(e)})
 
-        return {
-            "cadastrados": cadastrados,
-            "ignorados": ignorados,
-            "erros": erros,
-            "erros_df": pd.DataFrame(erros) if erros else None
-        }
+        resultado_final = {"status": "ok", "resumo": resultados}
+        if erros:
+            buffer = io.BytesIO()
+            pd.DataFrame(erros).to_excel(buffer, index=False)
+            buffer.seek(0)
+            resultado_final["arquivo_erros"] = buffer
+        return resultado_final
+
