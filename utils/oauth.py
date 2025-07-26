@@ -5,6 +5,7 @@ import requests
 from urllib.parse import urlencode
 from streamlit import secrets
 from utils.token_store import upsert_tokens, get_tokens
+import streamlit as st
 
 AUTH_BASE = "https://auth.contaazul.com/oauth2"
 SCOPES = "openid profile aws.cognito.signin.user.admin"
@@ -41,6 +42,8 @@ def exchange_code_for_tokens(code: str, state: str | None = None, company_id: st
     payload = resp.json()
 
     access_token = payload["access_token"]
+    print(payload)
+    st.write(payload)
 
     # 🎯 Consultar empresa para pegar o company_id real
     empresa_headers = {
@@ -48,8 +51,12 @@ def exchange_code_for_tokens(code: str, state: str | None = None, company_id: st
         "Content-Type": "application/json",
     }
     empresa_resp = requests.get("https://api.contaazul.com/v1/empresa", headers=empresa_headers, timeout=30)
-    empresa_resp.raise_for_status()
+
+    if empresa_resp.status_code != 200:
+        st.error(f"Erro ao consultar empresa: {empresa_resp.status_code} - {empresa_resp.text}")
+        return {"error": "empresa_request_failed"}
     empresa_data = empresa_resp.json()
+
 
     company_id = empresa_data.get("id")
 
