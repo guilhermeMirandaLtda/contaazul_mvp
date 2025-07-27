@@ -59,20 +59,37 @@ def show_dashboard():
     render_pessoas_ui()
     # aqui futuramente: render_pessoa_ui(), render_venda_ui()
 
+def _session_has_valid_token() -> bool:
+    tok = st.session_state.get("tokens")
+    if not tok:
+        return False
+    exp = tok.get("expires_at")
+    if isinstance(exp, str):
+        try:
+            exp = datetime.fromisoformat(exp)
+        except Exception:
+            return False
+    return bool(exp and exp > datetime.utcnow())
+
 def main():
     st.sidebar.title("Conta Azul MVP")
     handle_callback()
 
-    # 🔐 Garantia: se a sessão ainda não tem company_id (ex.: cold start), buscamos no banco
-    if not st.session_state.get("company_id"):
-        try:
-            from utils.token_store import get_any_company_id
-            cid = get_any_company_id()
-            if cid:
-                st.session_state["company_id"] = cid
-        except Exception as e:
-            # silencioso; seguimos para a tela de login se não houver token
-            pass
+     # Primeiro, preferimos sessão (zero DB)
+    if _session_has_valid_token():
+        show_dashboard()
+        return
+
+    # Garantia: se a sessão ainda não tem company_id (ex.: cold start), buscamos no banco
+    #if not st.session_state.get("company_id"):
+    #    try:
+    #        from utils.token_store import get_any_company_id
+    #        cid = get_any_company_id()
+    #        if cid:
+    #            st.session_state["company_id"] = cid
+    #    except Exception as e:
+    #        # silencioso; seguimos para a tela de login se não houver token
+    #        pass
 
     company_id = st.session_state.get("company_id")
     try:
