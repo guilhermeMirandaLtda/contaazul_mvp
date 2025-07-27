@@ -68,6 +68,30 @@ class PessoaService:
             return pd.to_datetime(s).strftime("%Y-%m-%d")
         except Exception:
             return None
+        
+        # ---------- Validadores adicionais ----------
+    @staticmethod
+    def _is_valid_cpf(cpf: str) -> bool:
+        return len(cpf) == 11 and cpf.isdigit()  # (checagem simples; se quiser, implementamos dígito verificador)
+
+    @staticmethod
+    def _is_valid_cnpj(cnpj: str) -> bool:
+        return len(cnpj) == 14 and cnpj.isdigit()  # idem
+
+    @staticmethod
+    def _is_valid_cep(cep: str) -> bool:
+        return len(cep) == 8 and cep.isdigit()
+
+    @staticmethod
+    def _is_valid_cell(num: str) -> bool:
+        # Celular BR usual: 11 dígitos (DDD + 9)
+        return len(num) == 11 and num.isdigit()
+
+    @staticmethod
+    def _is_valid_phone(num: str) -> bool:
+        # Telefone fixo aceita 10 dígitos (DDD + 8) ou 11 (algumas regiões)
+        return len(num) in (10, 11) and num.isdigit()
+
 
     # ---------- Validação de estrutura da planilha ----------
     def validar_planilha(self, df: pd.DataFrame) -> list[str]:
@@ -96,24 +120,31 @@ class PessoaService:
         any_addr = any(row.get(k) for k in ["cep", "logradouro", "numero", "bairro", "cidade", "estado", "pais"])
         if not any_addr:
             return []
+
         cep = self._only_digits(row.get("cep"))
         estado = (row.get("estado") or "").strip().upper()
         if estado and len(estado) > 2:
-            # reduz nomes tipo "São Paulo" -> "SP" se vierem assim; aqui deixamos só uppercase
             estado = estado[:2]
+
         end = {
-            "cep": cep if len(cep) == 8 else None,
+            "cep": cep if self._is_valid_cep(cep) else None,
             "logradouro": (row.get("logradouro") or "").strip() or None,
             "numero": (str(row.get("numero") or "").strip() or None),
             "complemento": (row.get("complemento") or "").strip() or None,
             "bairro": (row.get("bairro") or "").strip() or None,
             "cidade": (row.get("cidade") or "").strip() or None,
             "estado": estado or None,
-            "pais": (row.get("pais") or "").strip() or None,
         }
+
+        # país só entra se informado e não-vazio
+        pais = (row.get("pais") or "").strip()
+        if pais:
+            end["pais"] = pais
+
         # remove chaves None
-        end = {k: v for k, v in end.items() if v not in (None, "")}
+        end = {k: v for k, v in end.items() if v is not None}
         return [end] if end else []
+
 
     # ---------- Consulta de existência ----------
     def verificar_existencia(self, pessoa: dict) -> bool:
@@ -189,10 +220,18 @@ class PessoaService:
         tel = self._only_digits(row.get("telefone"))
         cel = self._only_digits(row.get("celular"))
 
+        if tel and not self._is_valid_phone(tel):
+            erros.append("telefone_comercial inválido (use 10 ou 11 dígitos, apenas números).")
+        if cel and not self._is_valid_cell(cel):
+            erros.append("celular inválido (use 11 dígitos, apenas números).")
+
         # endereços
         enderecos = self._enderecos_from_row(row)
-        if "enderecos" in row and not enderecos:
-            correcoes.append("enderecos enviado vazio foi removido do payload.")
+        if enderecos:
+            # valida CEP do primeiro endereço (se presente)
+            cep_val = enderecos[0].get("cep")
+            if cep_val and not self._is_valid_cep(cep_val):
+                erros.append("cep inválido (use 8 dígitos, apenas números).")
 
         payload = {
             "perfis": perfis,
