@@ -17,4 +17,7 @@ def get_connection():
         charset="utf8mb4",
         cursorclass=pymysql.cursors.DictCursor,
         autocommit=True,
+        connect_timeout=8,   # ⏱️
+        read_timeout=12,     # ⏱️
+        write_timeout=12,    # ⏱️
     )

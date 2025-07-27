@@ -7,7 +7,7 @@ from urllib.parse import urlencode
 from streamlit import secrets
 from utils.token_store import upsert_tokens, get_tokens
 from datetime import datetime, timedelta
-
+import streamlit as st
 AUTH_BASE = "https://auth.contaazul.com/oauth2"
 SCOPES = "openid profile aws.cognito.signin.user.admin"
 
@@ -80,6 +80,15 @@ def exchange_code_for_tokens(code: str, state: str | None = None, company_id: st
         company_id=derived_company_id,
     )
 
+    # 👇 CACHE DE SESSÃO (fallback caso o MySQL oscile)
+    try:
+        st.session_state["company_id"] = derived_company_id
+        st.session_state["__access_token"] = access_token
+        st.session_state["__refresh_token"] = refresh_token
+        st.session_state["__expires_at"] = (datetime.utcnow() + timedelta(seconds=expires_in)).isoformat()
+    except Exception:
+        pass
+
     return {**payload, "company_id": derived_company_id}
 
 def refresh_access_token(company_id: str | None = None) -> dict:
@@ -111,4 +120,13 @@ def refresh_access_token(company_id: str | None = None) -> dict:
         state=tokens.get("state"),
         company_id=company_id or tokens.get("company_id"),
     )
+
+    # 👇 também atualiza o cache de sessão:
+    try:
+        st.session_state["__access_token"] = payload["access_token"]
+        st.session_state["__refresh_token"] = payload.get("refresh_token", st.session_state.get("__refresh_token"))
+        st.session_state["__expires_at"] = (datetime.utcnow() + timedelta(seconds=int(payload.get("expires_in", 3600)))).isoformat()
+    except Exception:
+        pass
+    
     return payload

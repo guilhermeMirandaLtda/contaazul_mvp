@@ -73,6 +73,11 @@ def main():
             pass
 
     company_id = st.session_state.get("company_id")
+    try:
+        conectado = has_valid_token(company_id)
+    except Exception:
+        conectado = False
+
     if not has_valid_token(company_id):
         st.sidebar.warning("Desconectado")
         st.title("💙 Conectar com a API Conta Azul")

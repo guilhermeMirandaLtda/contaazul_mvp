@@ -4,6 +4,9 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from utils.mysql_conn import get_connection
 
+# 👇 ADICIONE:
+import streamlit as st
+from pymysql.err import OperationalError
 
 _DEFAULT_COMPANY_ID = "default"
 _REFRESH_MARGIN_SEC = 90  # renova antes de expirar
@@ -38,9 +41,17 @@ def _ensure_table():
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     """
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql)
+    # 👇 BLINDAGEM: se o MySQL falhar, apenas registra e deixa o chamador lidar.
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+    except OperationalError as e:
+        # Log amigável; não derruba o app aqui.
+        st.warning("⚠️ Conexão MySQL indisponível no momento (tokens). Tentando fallback de sessão...")
+        raise
+
+
 
 def upsert_tokens(
     access_token: str,
@@ -49,7 +60,14 @@ def upsert_tokens(
     state: Optional[str] = None,
     company_id: Optional[str] = None,
 ) -> None:
-    _ensure_table()
+    try:
+        # ✅ Não precisamos mais de token na sessão; ca_api garante o Bearer válido.
+        _ensure_table()
+    except OperationalError as e:
+        # Log amigável; não derruba o app aqui.
+        st.warning("⚠️ Conexão MySQL indisponível no momento (tokens). Tentando fallback de sessão...")
+        raise
+
     company_id = company_id or _DEFAULT_COMPANY_ID
     expires_at = datetime.utcnow() + timedelta(seconds=max(60, int(expires_in) - _REFRESH_MARGIN_SEC))
     sql = """
@@ -61,23 +79,34 @@ def upsert_tokens(
         expires_at   = VALUES(expires_at),
         state        = VALUES(state)
     """
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, (company_id, access_token, refresh_token, expires_at, state))
-
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (company_id, access_token, refresh_token, expires_at, state))
+    except OperationalError as e:
+        # Log amigável; não derruba o app aqui.
+        st.warning("⚠️ Conexão MySQL indisponível no momento (tokens). Tentando fallback de sessão...")
 def get_tokens(company_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    _ensure_table()
     company_id = company_id or _DEFAULT_COMPANY_ID
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM tokens WHERE company_id=%s", (company_id,))
-            return cur.fetchone()
+    try:
+        _ensure_table()
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM tokens WHERE company_id=%s", (company_id,))
+                return cur.fetchone()
+    except Exception as e:
+        st.warning(f"⚠️ Erro ao ler tokens: {e}")
+        return None
 
 def has_valid_token(company_id: Optional[str] = None) -> bool:
-    row = get_tokens(company_id)
-    if not row:
+    try:
+        row = get_tokens(company_id)
+        if not row:
+            return False
+        return row["expires_at"] > datetime.utcnow()
+    except Exception as e:
+        st.warning(f"⚠️ Erro ao ler tokens: {e}")
         return False
-    return row["expires_at"] > datetime.utcnow()
 
 
 def get_any_company_id() -> Optional[str]:
