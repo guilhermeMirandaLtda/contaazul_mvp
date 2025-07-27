@@ -93,7 +93,8 @@ Os dados são validados e normalizados automaticamente antes do envio.
             "📥 Baixar modelo (Excel)",
             data=_gerar_modelo_excel(),
             file_name="modelo_pessoas.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary"
         )
 
         up = st.file_uploader("📤 Enviar planilha Excel de Pessoas", type=["xlsx"])

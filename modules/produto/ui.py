@@ -46,7 +46,8 @@ def render_ui():
             label="📥 Baixar modelo de planilha (Excel)",
             data=buffer,
             file_name="modelo_produto.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary"
         )
 
         uploaded_file = st.file_uploader("Enviar planilha Excel", type=["xlsx"])
