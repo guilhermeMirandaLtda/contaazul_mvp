@@ -4,6 +4,7 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 from modules.pessoas.service import PessoaService
+import json
 
 def _modelo_dataframe():
     """

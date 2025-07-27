@@ -5,6 +5,7 @@ import pandas as pd
 from io import BytesIO
 from modules.produto.service import ProdutoService
 
+
 def gerar_modelo_excel():
     dados_exemplo = {
         "nome": ["Camisa Polo Azul"],
