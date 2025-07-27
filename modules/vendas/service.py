@@ -6,12 +6,17 @@ from typing import Any, Dict, List, Tuple
 from dataclasses import dataclass
 from datetime import datetime
 import pandas as pd
+import unicodedata
 
 import streamlit as st
 
 from utils.ca_api import api_get, api_post
 from utils.token_store import has_valid_token
 from utils.errors import render_error  # opcional para logs amigáveis na UI
+
+# =========================
+#  Constantes & Helpers (MÓDULO)
+# =========================
 
 # Caminho do endpoint de criação de venda.
 # Por padrão, usamos a convenção v2: POST /v1/venda
@@ -22,6 +27,68 @@ SALES_PATH = st.secrets.get("general", {}).get("SALES_PATH", "/v1/venda")
 MAX_ROWS = 2_000          # linhas de planilha (1 linha = 1 item)
 MAX_ORDERS = 500          # qtd. distinta de pedidos (pedido_id)
 
+# --- Formas de pagamento: normalização & validação ---
+# Enum canônico (resumo). Se o seu tenant expuser mais, basta acrescentar aqui.
+ALLOWED_PAYMENT_METHODS = {
+    "PIX",
+    "BOLETO_BANCARIO",
+    "CARTAO_CREDITO",
+    "CARTAO_DEBITO",
+    "DEPOSITO_BANCARIO",
+    "TRANSFERENCIA_BANCARIA",
+    "DINHEIRO",
+    "CARTEIRA_DIGITAL",
+    "CREDITO_LOJA",
+    "CHEQUE",
+    # ... acrescente conforme seu tenant/enum exato
+}
+
+# Apelidos comuns → valor canônico
+PAYMENT_ALIASES = {
+    # PIX (qualquer banco vira PIX)
+    "PIX": "PIX",
+    "PIX_ITAU": "PIX", "PIX_BRADESCO": "PIX", "PIX_BB": "PIX", "PIX_CAIXA": "PIX",
+    "QRCODE": "PIX", "CHAVE_PIX": "PIX",
+
+    # BOLETO
+    "BOLETO": "BOLETO_BANCARIO",
+    "BOLETO_BB": "BOLETO_BANCARIO", "BOLETO_CAIXA": "BOLETO_BANCARIO",
+    "BOLETO_BRADESCO": "BOLETO_BANCARIO",
+
+    # Cartões
+    "CARTAO_CREDITO": "CARTAO_CREDITO",
+    "CREDITO": "CARTAO_CREDITO",
+    "CARTAO_DEBITO": "CARTAO_DEBITO",
+    "DEBITO": "CARTAO_DEBITO",
+
+    # Outras linhas comuns
+    "TRANSFERENCIA": "TRANSFERENCIA_BANCARIA",
+    "TED": "TRANSFERENCIA_BANCARIA", "DOC": "TRANSFERENCIA_BANCARIA",
+    "DEPOSITO": "DEPOSITO_BANCARIO",
+    "DINHEIRO": "DINHEIRO",
+    "WALLET": "CARTEIRA_DIGITAL",
+}
+
+def _normalize_token(s: str) -> str:
+    s = str(s or "").strip().upper()
+    s = "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+    s = s.replace("-", "_").replace(" ", "_")
+    return s
+
+def _normalize_payment_method(raw: str) -> str:
+    key = _normalize_token(raw)
+    if key in ALLOWED_PAYMENT_METHODS:
+        return key
+    if key in PAYMENT_ALIASES:
+        return PAYMENT_ALIASES[key]
+    # tenta combinações “BANCO” após o método (ex.: PIX_ITAU) → PIX
+    if key.startswith("PIX"):
+        return "PIX"
+    if key.startswith("BOLETO"):
+        return "BOLETO_BANCARIO"
+    # falhou → erro explicativo
+    allowed_preview = ", ".join(sorted(list(ALLOWED_PAYMENT_METHODS))[:8]) + ", ..."
+    raise ValueError(f"Forma de pagamento inválida: '{raw}'. Use valores como: {allowed_preview}")
 
 # -------------------------
 # Modelo/Contrato de entrada
@@ -56,23 +123,19 @@ informações de cabeçalho e itens, alterando apenas as linhas de pagamentos; o
 por pedido_id para montar o payload final com listas de items e payments.
 """
 
-
 @dataclass
 class VendaItem:
     tipo: str              # PRODUTO | SERVICO
     codigo: str            # SKU/código
     quantidade: float
     unit_price: float
-    # id_resolvido é preenchido na resolução (produto_id/servico_id)
-    id_resolvido: str | None = None
-
+    id_resolvido: str | None = None  # preenchido na resolução
 
 @dataclass
 class ParcelaPagamento:
     metodo: str            # payment_method
     valor: float           # payment_amount
     vencimento: str        # YYYY-MM-DD
-
 
 @dataclass
 class CabecalhoVenda:
@@ -86,16 +149,13 @@ class CabecalhoVenda:
     total_declarado: float | None
     observacao: str | None
 
-
 @dataclass
 class VendaMontada:
     header: CabecalhoVenda
     itens: List[VendaItem]
     payments: List[ParcelaPagamento]
 
-
 class VendaService:
-
     # ---------- Geração do modelo ----------
     @staticmethod
     def gerar_modelo_planilha() -> io.BytesIO:
@@ -142,7 +202,6 @@ class VendaService:
         bio = io.BytesIO()
         with pd.ExcelWriter(bio, engine="openpyxl") as writer:
             df.to_excel(writer, index=False, sheet_name="vendas")
-            # Guia rápido no segundo sheet
             guia = pd.DataFrame(
                 {
                     "Instruções": [
@@ -176,14 +235,11 @@ class VendaService:
         try:
             df = pd.read_excel(file)
         except Exception:
-            # Pode ser CSV
             file.seek(0)
             df = pd.read_csv(file)
 
-        # normaliza colunas
         df.columns = [c.strip().lower() for c in df.columns]
 
-        # checagem mínima
         obrig = [
             "pedido_id", "sale_date", "customer_tipo", "customer_nome", "customer_documento",
             "item_tipo", "item_codigo", "item_quantidade", "item_unit_price",
@@ -196,21 +252,17 @@ class VendaService:
         if len(df) > MAX_ROWS:
             raise ValueError(f"Limite de {MAX_ROWS} linhas excedido.")
 
-        # Coerção de tipos/formatos
         df["pedido_id"] = df["pedido_id"].astype(str).str.strip()
 
         for col in ["item_quantidade", "item_unit_price", "payment_amount", "shipping_cost", "total_declarado"]:
             if col in df.columns:
                 df[col] = df[col].apply(cls._to_num)
 
-        # datas ISO
         for col in ["sale_date", "payment_due_date"]:
             df[col] = pd.to_datetime(df[col], errors="coerce").dt.strftime("%Y-%m-%d")
 
-        # documentos/telefones só dígitos
         df["customer_documento"] = df["customer_documento"].apply(cls._only_digits)
 
-        # defaults
         if "status" not in df.columns:
             df["status"] = "EM_ABERTO"
         if "shipping_cost" not in df.columns:
@@ -223,18 +275,11 @@ class VendaService:
     # ---------- Resolução de IDs (produto/serviço) ----------
     @staticmethod
     def _resolve_produto_id(codigo: str) -> str | None:
-        """
-        Tenta localizar o produto pelo código (SKU) em endpoints conhecidos.
-        Preferência: v2 /v1/produto?codigo_sku=...; fallback: /v1/products?code=...
-        """
-        # v2 produto
         try:
             data = api_get("/v1/produto", params={"codigo_sku": codigo})
-            # Respostas v2 costumam vir paginadas; adapte se necessário
             if isinstance(data, dict):
                 itens = data.get("itens") or data.get("data") or data.get("items")
                 if isinstance(itens, list) and itens:
-                    # tente chaves de id usuais
                     for p in itens:
                         pid = p.get("id") or p.get("identificador") or p.get("identificador_legado")
                         if pid:
@@ -242,7 +287,6 @@ class VendaService:
         except Exception:
             pass
 
-        # fallback products (inglês)
         try:
             data = api_get("/v1/products", params={"code": codigo})
             if isinstance(data, list) and data:
@@ -260,11 +304,7 @@ class VendaService:
 
     @staticmethod
     def _resolve_servico_id(codigo: str) -> str | None:
-        """
-        Busca serviço por algum filtro (ex.: código/descrição).
-        """
         try:
-            # alguns tenants expõem filtros 'codigo' ou 'descricao'
             data = api_get("/v1/servicos", params={"codigo": codigo})
             if isinstance(data, dict):
                 itens = data.get("itens") or data.get("data") or data.get("items")
@@ -278,6 +318,60 @@ class VendaService:
             pass
         return None
 
+    # ---------- Busca/criação de pessoa ----------
+    @staticmethod
+    def _buscar_pessoa_por_documento(documento: str) -> dict | None:
+        try:
+            data = api_get("/v1/pessoas", params={"documento": documento})
+            if isinstance(data, dict):
+                itens = data.get("data") or data.get("items") or data.get("itens") or []
+            else:
+                itens = data or []
+            for p in itens:
+                doc = (p.get("cpf") or p.get("cnpj") or p.get("documento") or "").replace(".", "").replace("-", "").replace("/", "")
+                if doc == documento:
+                    return p
+        except Exception:
+            pass
+
+        for key in ("cpf", "cnpj"):
+            try:
+                data = api_get("/v1/pessoas", params={key: documento})
+                itens = data.get("data") if isinstance(data, dict) else data
+                itens = itens or []
+                for p in itens:
+                    doc = (p.get("cpf") or p.get("cnpj") or p.get("documento") or "").replace(".", "").replace("-", "").replace("/", "")
+                    if doc == documento:
+                        return p
+            except Exception:
+                pass
+        return None
+
+    @staticmethod
+    def _criar_pessoa_minima(tipo: str, nome: str, documento: str) -> dict:
+        payload = {
+            "perfis": [{"tipo_perfil": "CLIENTE"}],
+            "tipo_pessoa": "FISICA" if len(documento) == 11 else "JURIDICA",
+            "nome": nome,
+        }
+        if len(documento) == 11:
+            payload["cpf"] = documento
+        else:
+            payload["cnpj"] = documento
+
+        return api_post("/v1/pessoa", json=payload)
+
+    @classmethod
+    def _resolve_or_create_customer(cls, tipo: str, nome: str, documento: str) -> dict:
+        pessoa = cls._buscar_pessoa_por_documento(documento)
+        if not pessoa:
+            pessoa = cls._criar_pessoa_minima(tipo, nome, documento)
+
+        pessoa_id = pessoa.get("id") or pessoa.get("identificador") or pessoa.get("identificador_legado")
+        if not pessoa_id:
+            return {"type": tipo, "name": nome, "document": documento}
+        return {"id": pessoa_id}
+
     # ---------- Montagem por pedido ----------
     @classmethod
     def _montar_por_pedido(cls, df: pd.DataFrame) -> Tuple[List[VendaMontada], pd.DataFrame]:
@@ -290,8 +384,6 @@ class VendaService:
 
         for pid in pedidos:
             bloco = df[df["pedido_id"] == pid]
-
-            # cabeçalho (usa a 1ª linha do grupo)
             r0 = bloco.iloc[0].to_dict()
             try:
                 header = CabecalhoVenda(
@@ -306,17 +398,14 @@ class VendaService:
                     observacao=str(r0.get("observacao", "") or ""),
                 )
 
-                # validações de cabeçalho
                 if header.cliente_tipo not in ("FISICA", "JURIDICA", "ESTRANGEIRA"):
                     raise ValueError("customer_tipo inválido (use FISICA/JURIDICA/ESTRANGEIRA).")
                 if header.cliente_tipo == "FISICA" and len(header.cliente_documento) != 11:
                     raise ValueError("CPF inválido: use 11 dígitos.")
                 if header.cliente_tipo == "JURIDICA" and len(header.cliente_documento) != 14:
                     raise ValueError("CNPJ inválido: use 14 dígitos.")
-                # data
                 datetime.strptime(header.sale_date, "%Y-%m-%d")
 
-                # itens
                 itens: List[VendaItem] = []
                 total_itens = 0.0
                 for _, row in bloco.iterrows():
@@ -335,7 +424,6 @@ class VendaService:
                     total_itens += it.quantidade * it.unit_price
                     itens.append(it)
 
-                # pagamentos
                 payments: List[ParcelaPagamento] = []
                 soma_pag = 0.0
                 for _, row in bloco.iterrows():
@@ -346,7 +434,6 @@ class VendaService:
                     )
                     if pm.valor <= 0:
                         raise ValueError(f"payment_amount deve ser > 0 no pedido {pid}")
-                    # data
                     datetime.strptime(pm.vencimento, "%Y-%m-%d")
                     soma_pag += pm.valor
                     payments.append(pm)
@@ -359,7 +446,6 @@ class VendaService:
                             f"total_declarado ({header.total_declarado}) difere da soma (itens+frete={total_calc}) no pedido {pid}"
                         )
 
-                # também é coerente checar se soma dos pagamentos = total_calc
                 if round(soma_pag, 2) != total_calc:
                     raise ValueError(
                         f"Soma dos pagamentos ({round(soma_pag,2)}) difere do total calculado ({total_calc}) no pedido {pid}"
@@ -381,34 +467,34 @@ class VendaService:
                 pid = cls._resolve_produto_id(it.codigo)
                 if not pid:
                     raise ValueError(f"Produto não encontrado para código '{it.codigo}'.")
-                itens_payload.append(
-                    {"product_id": pid, "quantity": it.quantidade, "unit_price": it.unit_price}
-                )
+                itens_payload.append({"product_id": pid, "quantity": it.quantidade, "unit_price": it.unit_price})
             else:
                 sid = cls._resolve_servico_id(it.codigo)
                 if not sid:
                     raise ValueError(f"Serviço não encontrado para código '{it.codigo}'.")
-                itens_payload.append(
-                    {"service_id": sid, "quantity": it.quantidade, "unit_price": it.unit_price}
-                )
+                itens_payload.append({"service_id": sid, "quantity": it.quantidade, "unit_price": it.unit_price})
 
         payments_payload = [
-            {"payment_method": p.metodo, "amount": p.valor, "due_date": p.vencimento}
+            {
+                "payment_method": _normalize_payment_method(p.metodo),  # normaliza/valida (helpers do MÓDULO)
+                "amount": p.valor,
+                "due_date": p.vencimento
+            }
             for p in venda.payments
         ]
 
-        customer = {
-            "type": venda.header.cliente_tipo,     # FISICA | JURIDICA | ESTRANGEIRA
-            "name": venda.header.cliente_nome,
-            "document": venda.header.cliente_documento,
-        }
+        customer = cls._resolve_or_create_customer(
+            tipo=venda.header.cliente_tipo,
+            nome=venda.header.cliente_nome,
+            documento=venda.header.cliente_documento,
+        )
 
         payload = {
             "customer": customer,
             "items": itens_payload,
             "payments": payments_payload,
             "sale_date": venda.header.sale_date,
-            "status": venda.header.status,         # EM_ABERTO, etc.
+            "status": venda.header.status,
             "shipping_cost": venda.header.shipping_cost,
         }
         if venda.header.observacao:
@@ -430,7 +516,6 @@ class VendaService:
             try:
                 payload = cls._resolver_itens_e_payload(venda)
                 resp = api_post(SALES_PATH, json=payload)
-                # mapeia um possível campo id na resposta
                 sale_id = resp.get("id") or resp.get("identificador") or resp.get("sale_id")
                 resultados.append(
                     {
@@ -460,5 +545,5 @@ class VendaService:
         return {
             "resumo": resumo,
             "resultado_df": df_result,
-            "erros_montagem_df": erros_montagem_df,  # erros ainda na fase de montagem/validação
+            "erros_montagem_df": erros_montagem_df,
         }
