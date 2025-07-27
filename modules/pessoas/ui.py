@@ -5,6 +5,7 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 from modules.pessoas.service import PessoaService
+from utils.errors import render_error
 
 
 def _modelo_dataframe():
@@ -119,10 +120,4 @@ Os dados são validados e normalizados automaticamente antes do envio.
                             st.dataframe(df_resumo[df_resumo["status"] == "Erro"], use_container_width=True)
 
             except Exception as e:
-                st.error("❌ Erro ao processar a planilha:")
-                # Se a exceção carregou um JSON, mostramos organizado
-                try:
-                    info = json.loads(str(e))
-                    st.json(info)
-                except Exception:
-                    st.write(str(e))
+                render_error(e, context="Importar Pessoas")

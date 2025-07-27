@@ -4,6 +4,7 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 from modules.produto.service import ProdutoService
+from utils.errors import render_error
 
 
 def gerar_modelo_excel():
@@ -68,4 +69,4 @@ def render_ui():
                     st.dataframe(resumo_df, use_container_width=True)
 
             except Exception as e:
-                st.error(f"❌ Erro ao processar planilha: {e}")
+                render_error(e, context="Importar Produtos")

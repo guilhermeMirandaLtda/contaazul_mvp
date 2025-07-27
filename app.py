@@ -7,6 +7,7 @@ from utils.oauth import build_auth_url, exchange_code_for_tokens
 from utils.ca_api import api_get
 from datetime import datetime, timezone
 import time
+from utils.errors import render_error
 from modules.produto.ui import render_ui as render_produto_ui
 from modules.pessoas.ui import render_ui as render_pessoas_ui
 
@@ -24,7 +25,7 @@ def handle_callback():
                 st.success("Autenticação concluída com sucesso!")
                 st.query_params.clear()
             except Exception as e:
-                st.error(f"Erro na autenticação: {e}")
+                render_error(e, context="Autenticação")
 
 def show_dashboard():
     st.sidebar.success("Conectado à Conta Azul")
