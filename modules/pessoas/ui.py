@@ -1,55 +1,63 @@
 # modules/pessoas/ui.py
 
+import json
 import streamlit as st
 import pandas as pd
 from io import BytesIO
 from modules.pessoas.service import PessoaService
-import json
+
 
 def _modelo_dataframe():
     """
-    Modelo abrangente para testes do dia a dia (CPF/CNPJ, endereço, flags cliente/fornecedor).
+    Modelo abrangente com PF e PJ para testes.
     """
     return pd.DataFrame([
+        # PF válida
         {
             "tipo": "FISICA",
             "nome": "João da Silva",
-            "documento": "123.456.789-09",
+            "documento": "12345678909",   # 11 dígitos
             "email": "joao.silva@example.com",
-            "telefone": "1130012000",
+            "telefone": "1130023003",
             "celular": "11988887777",
+            "cliente": "sim",
+            "fornecedor": "nao",
             "cep": "01311000",
             "logradouro": "Av. Paulista",
             "numero": "1000",
-            "complemento": "Conjunto 101",
             "bairro": "Bela Vista",
             "cidade": "São Paulo",
             "estado": "SP",
-            "cliente": "VERDADEIRO",
-            "fornecedor": "FALSO",
+            "pais": "Brasil",
             "data_nascimento": "15/04/1988",
+            "observacao": "PF de teste",
+            "codigo": "PF-0001"
         },
+        # PJ válida
         {
             "tipo": "JURIDICA",
-            "nome": "Tech Soluções LTDA",
-            "documento": "12.345.678/0001-90",
-            "nome_fantasia": "Tech Soluções",
-            "email": "contato@techsolucoes.com.br",
+            "nome": "Empresa Exemplo LTDA",
+            "documento": "12345678000195",  # 14 dígitos
+            "email": "contato@empresa.com",
             "telefone": "4130023003",
             "celular": "",
+            "cliente": "sim",
+            "fornecedor": "sim",
             "cep": "80010000",
             "logradouro": "Rua XV de Novembro",
             "numero": "250",
-            "complemento": "Sala 502",
             "bairro": "Centro",
             "cidade": "Curitiba",
             "estado": "PR",
-            "cliente": "VERDADEIRO",
-            "fornecedor": "VERDADEIRO",
+            "pais": "Brasil",
+            "nome_fantasia": "Empresa Exemplo",
             "inscricao_estadual": "ISENTO",
             "inscricao_municipal": "12345",
+            "observacao": "PJ de teste",
+            "codigo": "PJ-0001"
         },
     ])
+
 
 def _gerar_modelo_excel():
     df = _modelo_dataframe()
@@ -58,44 +66,40 @@ def _gerar_modelo_excel():
     buf.seek(0)
     return buf
 
+
 def render_ui():
-    with st.expander("👥 Pessoas — Importar via Excel"):
-        st.divider()
-        st.title("**CADASTRO DE CLIENTE/FORNECEDOR**", )
+    with st.expander("📇 CADASTRO DE CLIENTE / FORNECEDOR"):
+        st.caption("Importe em lote os dados dos seus clientes, fornecedores ou transportadoras.")
         st.markdown("""
-            **Descrição:**  
-            Você pode cadastrar pessoas físicas ou jurídicas com perfis de **cliente**, **fornecedor** ou **transportadora**, preenchendo os dados básicos e opcionais.
+**Descrição:**  
+Cadastre pessoas físicas ou jurídicas com perfis de **CLIENTE** e/ou **FORNECEDOR**.  
+Os dados são validados e normalizados automaticamente antes do envio.
 
-            **Campos obrigatórios na planilha:**
-            - `tipo` → define o tipo da pessoa (`FISICA`, `JURIDICA` ou `ESTRANGEIRA`)
-            - `nome` → nome completo ou razão social
-            - `documento` → CPF ou CNPJ (somente números)
+**Campos obrigatórios:**
+- `tipo` → `FISICA`, `JURIDICA` ou `ESTRANGEIRA`
+- `nome` → nome completo / razão social
+- `documento` → `CPF` (11 dígitos) se FISICA, `CNPJ` (14 dígitos) se JURIDICA
 
-            **Campos opcionais recomendados:**
-            - `email`, `telefone`, `celular`
-            - `cliente`, `fornecedor` (valores: `sim`, `não`, `1`, `0`, etc.)
-            - `cep`, `logradouro`, `numero`, `bairro`, `cidade`, `estado`, `pais`
-            - `data_nascimento` (formato: `dd/mm/yyyy` ou `yyyy-mm-dd`)
-            - `observacao`, `codigo`, `nome_fantasia`, `inscricao_estadual`, `inscricao_municipal`
-                """)
-        st.caption("Dica: Se um CPF/CNPJ ou nome já estiver cadastrado, ele será automaticamente ignorado.")
+**Campos opcionais úteis:**
+- `email`, `telefone`, `celular`
+- `cliente`, `fornecedor` (aceita `sim/nao`, `true/false`, `1/0`)
+- `cep`, `logradouro`, `numero`, `bairro`, `cidade`, `estado` (UF), `pais`
+- `data_nascimento` (`dd/mm/aaaa` ou `yyyy-mm-dd`)
+- `observacao`, `codigo`, `nome_fantasia`, `inscricao_estadual`, `inscricao_municipal`
+        """)
 
-        # Modelo
         st.download_button(
             "📥 Baixar modelo (Excel)",
             data=_gerar_modelo_excel(),
             file_name="modelo_pessoas.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="tertiary",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
         up = st.file_uploader("📤 Enviar planilha Excel de Pessoas", type=["xlsx"])
+        debug = st.toggle("🔍 Depurar payload enviado à API (mostrar JSON em caso de erro)", value=False)
 
-        # modules/pessoas/ui.py  (trecho dentro do if up:)
         if up:
             st.info("📊 Processando planilha…")
-            debug = st.toggle("🔍 Depurar payload enviado à API (mostrar JSON em caso de erro)", value=False)
-
             try:
                 svc = PessoaService()
                 resultado = svc.processar_upload(up, debug=debug)
@@ -111,14 +115,14 @@ def render_ui():
 
                     if any(r["status"] == "Erro" for r in resultado["resumo"]):
                         with st.expander("⚠️ Visualizar erros detalhados"):
+                            # Mostra a mensagem completa (inclui JSON do payload/erro quando debug=True)
                             st.dataframe(df_resumo[df_resumo["status"] == "Erro"], use_container_width=True)
 
             except Exception as e:
-                st.error(f"❌ Erro ao processar a planilha:")
-                # se o RuntimeError trouxe JSON, mostramos bonito
+                st.error("❌ Erro ao processar a planilha:")
+                # Se a exceção carregou um JSON, mostramos organizado
                 try:
                     info = json.loads(str(e))
                     st.json(info)
                 except Exception:
-                    st.write(e)
-    st.divider()
+                    st.write(str(e))

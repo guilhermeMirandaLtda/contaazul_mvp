@@ -7,17 +7,21 @@ import requests
 from datetime import datetime
 from utils.ca_api import api_get, api_post
 
+
 class PessoaService:
     """
-    Importação em massa de Pessoas (v2).
-    - Endpoints: /v1/pessoa (GET+POST)
-    - Busca por termo_busca (com fallback para termo)
+    Importação em massa de Pessoas (v2) com saneamento e validação de payload.
+    - Endpoints oficiais: /v1/pessoa (GET+POST)
+    - Busca por termo_busca (fallback termo)
     - Payload com tipo_pessoa, perfis[], cpf/cnpj e enderecos[].
+    - Correção de campos comuns (CPF/CNPJ/CEP/telefones/data).
     """
 
-    PESSOAS_LIST_PATH = "/v1/pessoa"    # GET ?termo_busca=... (fallback ?termo=...)
+    # Endpoints
+    PESSOAS_LIST_PATH = "/v1/pessoa"    # GET ?termo_busca=... (fallback: ?termo=...)
     PESSOAS_CREATE_PATH = "/v1/pessoa"  # POST
 
+    # Colunas esperadas na planilha
     CAMPOS_OBRIGATORIOS = ["tipo", "nome", "documento"]
     CAMPOS_OPCIONAIS = [
         "email", "telefone", "celular",
@@ -28,6 +32,9 @@ class PessoaService:
         "nome_fantasia", "data_nascimento", "observacao", "codigo"
     ]
     CAMPOS_VALIDOS = CAMPOS_OBRIGATORIOS + CAMPOS_OPCIONAIS
+
+    TIPOS_PESSOA_VALIDOS = {"FISICA", "JURIDICA", "ESTRANGEIRA"}
+    TIPOS_PERFIL_VALIDOS = {"CLIENTE", "FORNECEDOR", "TRANSPORTADORA"}
 
     # ---------- Normalizadores ----------
     @staticmethod
@@ -44,6 +51,9 @@ class PessoaService:
 
     @staticmethod
     def _date_to_iso(d) -> str | None:
+        """
+        Converte 'dd/mm/aaaa' ou valores reconhecíveis para 'YYYY-MM-DD'.
+        """
         if d in (None, "", "nan"):
             return None
         if isinstance(d, datetime):
@@ -59,7 +69,7 @@ class PessoaService:
         except Exception:
             return None
 
-    # ---------- Validação ----------
+    # ---------- Validação de estrutura da planilha ----------
     def validar_planilha(self, df: pd.DataFrame) -> list[str]:
         df.columns = df.columns.str.strip().str.lower()
         erros = []
@@ -70,35 +80,46 @@ class PessoaService:
             erros.append("Limite máximo de 500 linhas por importação.")
         return erros
 
-    # ---------- Perfis ----------
+    # ---------- Builders ----------
     def _perfis_from_row(self, row: dict) -> list[dict]:
         perfis = []
         if self._to_bool(row.get("cliente", True)):
             perfis.append({"tipo_perfil": "CLIENTE"})
         if self._to_bool(row.get("fornecedor", False)):
             perfis.append({"tipo_perfil": "FORNECEDOR"})
+        # Se ninguém marcou nada, padrão CLIENTE para não cair em 400
         if not perfis:
             perfis.append({"tipo_perfil": "CLIENTE"})
         return perfis
 
-    # ---------- Endereços ----------
     def _enderecos_from_row(self, row: dict) -> list[dict]:
         any_addr = any(row.get(k) for k in ["cep", "logradouro", "numero", "bairro", "cidade", "estado", "pais"])
         if not any_addr:
             return []
-        return [{
-            "cep": self._only_digits(row.get("cep")),
-            "logradouro": (row.get("logradouro") or "").strip(),
-            "numero": (str(row.get("numero") or "").strip()),
-            "complemento": (row.get("complemento") or "").strip(),
-            "bairro": (row.get("bairro") or "").strip(),
-            "cidade": (row.get("cidade") or "").strip(),
-            "estado": (row.get("estado") or "").strip(),
-            "pais": (row.get("pais") or "").strip(),
-        }]
+        cep = self._only_digits(row.get("cep"))
+        estado = (row.get("estado") or "").strip().upper()
+        if estado and len(estado) > 2:
+            # reduz nomes tipo "São Paulo" -> "SP" se vierem assim; aqui deixamos só uppercase
+            estado = estado[:2]
+        end = {
+            "cep": cep if len(cep) == 8 else None,
+            "logradouro": (row.get("logradouro") or "").strip() or None,
+            "numero": (str(row.get("numero") or "").strip() or None),
+            "complemento": (row.get("complemento") or "").strip() or None,
+            "bairro": (row.get("bairro") or "").strip() or None,
+            "cidade": (row.get("cidade") or "").strip() or None,
+            "estado": estado or None,
+            "pais": (row.get("pais") or "").strip() or None,
+        }
+        # remove chaves None
+        end = {k: v for k, v in end.items() if v not in (None, "")}
+        return [end] if end else []
 
     # ---------- Consulta de existência ----------
     def verificar_existencia(self, pessoa: dict) -> bool:
+        """
+        Usa GET /v1/pessoa?termo_busca=... (documento ou nome). Fallback com ?termo=...
+        """
         doc_norm = self._only_digits(pessoa.get("documento"))
         nome_norm = self._norm_text(pessoa.get("nome"))
         termo = doc_norm or nome_norm
@@ -137,31 +158,67 @@ class PessoaService:
 
         return False
 
-    # ---------- Montagem do payload ----------
-    def _payload_pessoa(self, row: dict) -> dict:
-        tipo = (row.get("tipo") or "FISICA").strip().upper()   # FISICA | JURIDICA | ESTRANGEIRA
+    # ---------- Montagem e VALIDAÇÃO de payload ----------
+    def _payload_pessoa(self, row: dict) -> tuple[dict, list[str], list[str]]:
+        """
+        Retorna (payload_corrigido, erros, correcoes).
+        - erros: mensagens que impedem o POST (ex.: nome vazio, cpf/cnpj inválido)
+        - correcoes: notas sobre saneamentos que fizemos (ex.: removemos enderecos vazio)
+        """
+        correcoes: list[str] = []
+        erros: list[str] = []
+
+        tipo = (row.get("tipo") or "FISICA").strip().upper()
+        if tipo not in self.TIPOS_PESSOA_VALIDOS:
+            erros.append(f"tipo_pessoa inválido: '{tipo}'. Use FISICA, JURIDICA ou ESTRANGEIRA.")
+        nome = (row.get("nome") or "").strip()
+        if not nome:
+            erros.append("nome obrigatório e não pode ser vazio.")
+
         documento = self._only_digits(row.get("documento"))
+        email = (row.get("email") or "").strip()
+
+        # perfis
+        perfis = self._perfis_from_row(row)
+        # sanity de perfis válidos (defensivo)
+        perfis = [p for p in perfis if p.get("tipo_perfil") in self.TIPOS_PERFIL_VALIDOS]
+        if not perfis:
+            erros.append("perfis deve conter pelo menos um tipo_perfil válido (CLIENTE/FORNECEDOR/TRANSPORTADORA).")
+
+        # contato
+        tel = self._only_digits(row.get("telefone"))
+        cel = self._only_digits(row.get("celular"))
+
+        # endereços
+        enderecos = self._enderecos_from_row(row)
+        if "enderecos" in row and not enderecos:
+            correcoes.append("enderecos enviado vazio foi removido do payload.")
 
         payload = {
-            "perfis": self._perfis_from_row(row),               # required
-            "tipo_pessoa": tipo,                                 # required
-            "nome": (row.get("nome") or "").strip(),            # required
-            "email": (row.get("email") or "").strip(),
-            "telefone_comercial": self._only_digits(row.get("telefone")),
-            "celular": self._only_digits(row.get("celular")),
-            "observacao": (row.get("observacao") or "").strip(),
+            "perfis": perfis,
+            "tipo_pessoa": tipo,
+            "nome": nome,
+            "email": email or None,
+            "telefone_comercial": tel or None,
+            "celular": cel or None,
+            "observacao": (row.get("observacao") or "").strip() or None,
             "codigo": (str(row.get("codigo")) if row.get("codigo") not in (None, "") else None),
-            "enderecos": self._enderecos_from_row(row),
+            "enderecos": enderecos if enderecos else None,
         }
 
-        # Documento conforme tipo_pessoa
         if tipo == "FISICA":
-            payload["cpf"] = documento
+            if len(documento) != 11:
+                erros.append("cpf obrigatório para FISICA (11 dígitos, apenas números).")
+            else:
+                payload["cpf"] = documento
             dn = self._date_to_iso(row.get("data_nascimento"))
             if dn:
                 payload["data_nascimento"] = dn
         elif tipo == "JURIDICA":
-            payload["cnpj"] = documento
+            if len(documento) != 14:
+                erros.append("cnpj obrigatório para JURIDICA (14 dígitos, apenas números).")
+            else:
+                payload["cnpj"] = documento
             if row.get("nome_fantasia"):
                 payload["nome_fantasia"] = str(row.get("nome_fantasia")).strip()
             if row.get("inscricao_estadual"):
@@ -169,7 +226,7 @@ class PessoaService:
             if row.get("inscricao_municipal"):
                 payload["inscricao_municipal"] = str(row.get("inscricao_municipal")).strip()
         else:
-            # ESTRANGEIRA: sem cpf/cnpj; ajuste se seu tenant exigir.
+            # Estrangeira: sem cpf/cnpj
             pass
 
         # Remove chaves None/vazias
@@ -180,16 +237,33 @@ class PessoaService:
             if isinstance(v, list) and len(v) == 0:
                 continue
             cleaned[k] = v
-        return cleaned
+
+        # correções informativas (ex.: trims, formatações)
+        if email and cleaned.get("email") != email:
+            correcoes.append("email foi normalizado.")
+        if tel and cleaned.get("telefone_comercial") != tel:
+            correcoes.append("telefone foi normalizado (apenas dígitos).")
+        if cel and cleaned.get("celular") != cel:
+            correcoes.append("celular foi normalizado (apenas dígitos).")
+
+        return cleaned, erros, correcoes
 
     # ---------- POST com logs detalhados ----------
     def cadastrar_pessoa(self, pessoa_row: dict, debug: bool = False):
-        payload = self._payload_pessoa(pessoa_row)
+        payload, erros, correcoes = self._payload_pessoa(pessoa_row)
+        if erros:
+            # Se o payload não passa na pré-validação, não devemos chamar a API
+            raise RuntimeError(json.dumps({
+                "erro": "Erros de validação no payload",
+                "detalhes": erros,
+                "correcoes_aplicadas": correcoes,
+                "payload_corrigido": payload if debug else "oculto (habilite debug)"
+            }, ensure_ascii=False))
+
         try:
             resp = api_post(self.PESSOAS_CREATE_PATH, json=payload)
-            return True, resp
+            return True, {"payload": payload if debug else "ok", "resposta": resp}
         except requests.HTTPError as e:
-            # Repassa corpo da resposta para depuração
             status = e.response.status_code if e.response is not None else "?"
             body = None
             try:
@@ -200,12 +274,12 @@ class PessoaService:
                 except Exception:
                     body = str(e)
 
-            # Anexa o payload que tentamos enviar (facilita identificar o campo rejeitado)
             info = {
                 "endpoint": self.PESSOAS_CREATE_PATH,
                 "status_code": status,
                 "error_body": body,
-                "payload_enviado": payload if debug else "oculto (habilite debug)"
+                "payload_enviado": payload if debug else "oculto (habilite debug)",
+                "correcoes_aplicadas": correcoes
             }
             raise RuntimeError(json.dumps(info, ensure_ascii=False)) from e
         except Exception as e:
@@ -214,9 +288,9 @@ class PessoaService:
     # ---------- Pipeline principal ----------
     def processar_upload(self, arquivo_excel, debug: bool = False):
         df = pd.read_excel(arquivo_excel)
-        erros = self.validar_planilha(df)
-        if erros:
-            return {"status": "erro", "mensagem": "Erros na planilha", "resumo": [], "erros": erros}
+        erros_planilha = self.validar_planilha(df)
+        if erros_planilha:
+            return {"status": "erro", "mensagem": "Erros na planilha", "resumo": [], "erros": erros_planilha}
 
         cols = [c for c in df.columns if c in self.CAMPOS_VALIDOS]
         df = df[cols].fillna("")
@@ -227,7 +301,18 @@ class PessoaService:
             nome = (pessoa.get("nome") or "").strip()
             doc  = self._only_digits(pessoa.get("documento"))
 
-            # 1) Existência
+            # 0) Corrigir/validar payload ANTES de consultar existência (para não buscar por lixo)
+            payload_corrigido, erros, _correcoes = self._payload_pessoa(pessoa)
+            if erros:
+                resultados.append({
+                    "pessoa": nome, "documento": doc,
+                    "status": "Erro",
+                    "mensagem": f"Erros de validação: {', '.join(erros)}",
+                    "payload_corrigido": payload_corrigido if debug else None
+                })
+                continue
+
+            # 1) Verificar duplicidade (após saneamento)
             try:
                 if self.verificar_existencia(pessoa):
                     resultados.append({
@@ -244,13 +329,14 @@ class PessoaService:
                 })
                 continue
 
-            # 2) Cadastro
+            # 2) Cadastrar
             try:
                 ok, msg = self.cadastrar_pessoa(pessoa, debug=debug)
                 resultados.append({
                     "pessoa": nome, "documento": doc,
                     "status": "Cadastrado" if ok else "Erro",
-                    "mensagem": msg if isinstance(msg, str) else "OK"
+                    "mensagem": "OK" if ok else str(msg),
+                    "payload_corrigido": msg.get("payload") if (debug and isinstance(msg, dict)) else None
                 })
             except Exception as e:
                 resultados.append({
