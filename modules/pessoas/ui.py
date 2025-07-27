@@ -59,6 +59,7 @@ def _gerar_modelo_excel():
 
 def render_ui():
     with st.expander("👥 Pessoas — Importar via Excel"):
+        st.markdown("# **CADASTRO DE CLIENTE/FORNECEDOR**")
         st.markdown("Envie uma planilha `.xlsx` para **cadastrar pessoas em massa** (clientes/fornecedores).")
         st.markdown("**Campos obrigatórios:** `tipo` (FISICA/JURIDICA), `nome`, `documento` (CPF/CNPJ).")
         st.caption("Dica: usamos busca por **termo** (documento/nome) para evitar duplicidade.")
@@ -73,11 +74,14 @@ def render_ui():
 
         up = st.file_uploader("📤 Enviar planilha Excel de Pessoas", type=["xlsx"])
 
+        # modules/pessoas/ui.py  (trecho dentro do if up:)
         if up:
             st.info("📊 Processando planilha…")
+            debug = st.toggle("🔍 Depurar payload enviado à API (mostrar JSON em caso de erro)", value=False)
+
             try:
                 svc = PessoaService()
-                resultado = svc.processar_upload(up)
+                resultado = svc.processar_upload(up, debug=debug)
 
                 if resultado["status"] == "erro":
                     st.error("❌ Erros na estrutura da planilha:")
@@ -89,8 +93,15 @@ def render_ui():
                     st.dataframe(df_resumo, use_container_width=True)
 
                     if any(r["status"] == "Erro" for r in resultado["resumo"]):
-                        with st.expander("⚠️ Visualizar Erros"):
+                        with st.expander("⚠️ Visualizar erros detalhados"):
                             st.dataframe(df_resumo[df_resumo["status"] == "Erro"], use_container_width=True)
 
             except Exception as e:
-                st.error(f"❌ Erro ao processar a planilha: {e}")
+                st.error(f"❌ Erro ao processar a planilha:")
+                # se o RuntimeError trouxe JSON, mostramos bonito
+                try:
+                    info = json.loads(str(e))
+                    st.json(info)
+                except Exception:
+                    st.write(e)
+    st.divider()

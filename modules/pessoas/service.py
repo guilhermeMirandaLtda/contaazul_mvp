@@ -9,17 +9,15 @@ from utils.ca_api import api_get, api_post
 
 class PessoaService:
     """
-    Serviço de importação em massa de Pessoas.
-    Alinha endpoints e payload ao catálogo v2 (Pessoa).
+    Importação em massa de Pessoas (v2).
+    - Endpoints: /v1/pessoa (GET+POST)
+    - Busca por termo_busca (com fallback para termo)
+    - Payload com tipo_pessoa, perfis[], cpf/cnpj e enderecos[].
     """
 
-    # Endpoints oficiais (singular)
-    PESSOAS_LIST_PATH = "/v1/pessoa"   # GET ?termo_busca=...
-    PESSOAS_CREATE_PATH = "/v1/pessoa" # POST
-    # Doc: https://api-v2.contaazul.com/v1/pessoa (list/create)  # ver doc oficial
-    # (Página doc: Pessoas / Lista registros de pessoas + Criação) 
+    PESSOAS_LIST_PATH = "/v1/pessoa"    # GET ?termo_busca=... (fallback ?termo=...)
+    PESSOAS_CREATE_PATH = "/v1/pessoa"  # POST
 
-    # Colunas esperadas na planilha
     CAMPOS_OBRIGATORIOS = ["tipo", "nome", "documento"]
     CAMPOS_OPCIONAIS = [
         "email", "telefone", "celular",
@@ -79,7 +77,6 @@ class PessoaService:
             perfis.append({"tipo_perfil": "CLIENTE"})
         if self._to_bool(row.get("fornecedor", False)):
             perfis.append({"tipo_perfil": "FORNECEDOR"})
-        # Se nenhum marcado, por padrão considere cliente (evita 400 por perfis ausente)
         if not perfis:
             perfis.append({"tipo_perfil": "CLIENTE"})
         return perfis
@@ -90,7 +87,6 @@ class PessoaService:
         if not any_addr:
             return []
         return [{
-            # Campos aceitos pela doc da API de Pessoas em endereços
             "cep": self._only_digits(row.get("cep")),
             "logradouro": (row.get("logradouro") or "").strip(),
             "numero": (str(row.get("numero") or "").strip()),
@@ -103,53 +99,64 @@ class PessoaService:
 
     # ---------- Consulta de existência ----------
     def verificar_existencia(self, pessoa: dict) -> bool:
-        """
-        Usa GET /v1/pessoa?termo_busca=... (documento ou nome).
-        Compara por documento (somente dígitos) e por nome normalizado.
-        """
         doc_norm = self._only_digits(pessoa.get("documento"))
         nome_norm = self._norm_text(pessoa.get("nome"))
+        termo = doc_norm or nome_norm
+        if not termo:
+            return False
 
+        # 1) tentativa com termo_busca
         try:
-            termo = doc_norm or nome_norm
-            if not termo:
-                return False
             resp = api_get(self.PESSOAS_LIST_PATH, params={"termo_busca": termo})
             itens = resp.get("data", resp) if isinstance(resp, dict) else resp
-            if not isinstance(itens, list):
-                return False
-            for p in itens:
-                cand_doc = self._only_digits(p.get("documento") or p.get("cpf") or p.get("cnpj") or "")
-                cand_nome = self._norm_text(p.get("nome") or p.get("razaoSocial") or "")
-                if doc_norm and cand_doc and cand_doc == doc_norm:
-                    return True
-                if nome_norm and cand_nome and cand_nome == nome_norm:
-                    return True
+            if isinstance(itens, list):
+                for p in itens:
+                    cand_doc = self._only_digits(p.get("documento") or p.get("cpf") or p.get("cnpj") or "")
+                    cand_nome = self._norm_text(p.get("nome") or p.get("razaoSocial") or "")
+                    if doc_norm and cand_doc and cand_doc == doc_norm:
+                        return True
+                    if nome_norm and cand_nome and cand_nome == nome_norm:
+                        return True
         except Exception:
-            return False
+            pass
+
+        # 2) fallback com termo
+        try:
+            resp = api_get(self.PESSOAS_LIST_PATH, params={"termo": termo})
+            itens = resp.get("data", resp) if isinstance(resp, dict) else resp
+            if isinstance(itens, list):
+                for p in itens:
+                    cand_doc = self._only_digits(p.get("documento") or p.get("cpf") or p.get("cnpj") or "")
+                    cand_nome = self._norm_text(p.get("nome") or p.get("razaoSocial") or "")
+                    if doc_norm and cand_doc and cand_doc == doc_norm:
+                        return True
+                    if nome_norm and cand_nome and cand_nome == nome_norm:
+                        return True
+        except Exception:
+            pass
+
         return False
 
-    # ---------- Monta payload conforme doc ----------
+    # ---------- Montagem do payload ----------
     def _payload_pessoa(self, row: dict) -> dict:
-        tipo = (row.get("tipo") or "FISICA").strip().upper()  # FISICA/JURIDICA/ESTRANGEIRA
+        tipo = (row.get("tipo") or "FISICA").strip().upper()   # FISICA | JURIDICA | ESTRANGEIRA
         documento = self._only_digits(row.get("documento"))
 
         payload = {
-            "perfis": self._perfis_from_row(row),       # required
-            "tipo_pessoa": tipo,                         # required
-            "nome": (row.get("nome") or "").strip(),     # required
+            "perfis": self._perfis_from_row(row),               # required
+            "tipo_pessoa": tipo,                                 # required
+            "nome": (row.get("nome") or "").strip(),            # required
             "email": (row.get("email") or "").strip(),
             "telefone_comercial": self._only_digits(row.get("telefone")),
             "celular": self._only_digits(row.get("celular")),
             "observacao": (row.get("observacao") or "").strip(),
             "codigo": (str(row.get("codigo")) if row.get("codigo") not in (None, "") else None),
-            "enderecos": self._enderecos_from_row(row),  # array (pode ser vazio)
+            "enderecos": self._enderecos_from_row(row),
         }
 
         # Documento conforme tipo_pessoa
         if tipo == "FISICA":
             payload["cpf"] = documento
-            # Data de nascimento só faz sentido para FISICA
             dn = self._date_to_iso(row.get("data_nascimento"))
             if dn:
                 payload["data_nascimento"] = dn
@@ -162,32 +169,50 @@ class PessoaService:
             if row.get("inscricao_municipal"):
                 payload["inscricao_municipal"] = str(row.get("inscricao_municipal")).strip()
         else:
-            # ESTRANGEIRA: a doc permite, mas sem cpf/cnpj. Ajuste se a sua operação exigir.
+            # ESTRANGEIRA: sem cpf/cnpj; ajuste se seu tenant exigir.
             pass
 
-        # Remove chaves None (opcional, para evitar rejeição por campos vazios)
-        return {k: v for k, v in payload.items() if v not in (None, "")}
+        # Remove chaves None/vazias
+        cleaned = {}
+        for k, v in payload.items():
+            if v in (None, ""):
+                continue
+            if isinstance(v, list) and len(v) == 0:
+                continue
+            cleaned[k] = v
+        return cleaned
 
-    # ---------- POST ----------
-    def cadastrar_pessoa(self, pessoa_row: dict):
+    # ---------- POST com logs detalhados ----------
+    def cadastrar_pessoa(self, pessoa_row: dict, debug: bool = False):
         payload = self._payload_pessoa(pessoa_row)
         try:
             resp = api_post(self.PESSOAS_CREATE_PATH, json=payload)
             return True, resp
         except requests.HTTPError as e:
-            # Mostra corpo do erro para depuração (400/422)
-            body = ""
-            if e.response is not None:
+            # Repassa corpo da resposta para depuração
+            status = e.response.status_code if e.response is not None else "?"
+            body = None
+            try:
+                body = e.response.json()
+            except Exception:
                 try:
                     body = e.response.text
                 except Exception:
                     body = str(e)
-            raise RuntimeError(f"HTTP {e.response.status_code if e.response else ''} - {body}") from e
+
+            # Anexa o payload que tentamos enviar (facilita identificar o campo rejeitado)
+            info = {
+                "endpoint": self.PESSOAS_CREATE_PATH,
+                "status_code": status,
+                "error_body": body,
+                "payload_enviado": payload if debug else "oculto (habilite debug)"
+            }
+            raise RuntimeError(json.dumps(info, ensure_ascii=False)) from e
         except Exception as e:
             raise
 
     # ---------- Pipeline principal ----------
-    def processar_upload(self, arquivo_excel):
+    def processar_upload(self, arquivo_excel, debug: bool = False):
         df = pd.read_excel(arquivo_excel)
         erros = self.validar_planilha(df)
         if erros:
@@ -202,7 +227,7 @@ class PessoaService:
             nome = (pessoa.get("nome") or "").strip()
             doc  = self._only_digits(pessoa.get("documento"))
 
-            # 1) Verificar duplicidade
+            # 1) Existência
             try:
                 if self.verificar_existencia(pessoa):
                     resultados.append({
@@ -219,9 +244,9 @@ class PessoaService:
                 })
                 continue
 
-            # 2) Cadastrar
+            # 2) Cadastro
             try:
-                ok, msg = self.cadastrar_pessoa(pessoa)
+                ok, msg = self.cadastrar_pessoa(pessoa, debug=debug)
                 resultados.append({
                     "pessoa": nome, "documento": doc,
                     "status": "Cadastrado" if ok else "Erro",
