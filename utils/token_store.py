@@ -11,27 +11,18 @@ from pymysql.err import OperationalError
 _DEFAULT_COMPANY_ID = "default"
 _REFRESH_MARGIN_SEC = 90  # renova antes de expirar
 
+# ✅ ADICIONE ESTA LINHA
+_TABLE_READY = False
+
 def _ensure_table():
     """
-    Ensures that the "tokens" table exists in the MySQL database.
-    
-    This function creates the table if it does not exist, and does nothing if it already exists.
-    
-    The table has the following columns:
-    
-    - company_id: a unique identifier for the company (VARCHAR(100), PRIMARY KEY)
-    - access_token: the access token for ContaAzul API (TEXT, NOT NULL)
-    - refresh_token: the refresh token for ContaAzul API (TEXT, NOT NULL)
-    - expires_at: the datetime when the access token expires (DATETIME, NOT NULL)
-    - state: an optional state parameter (VARCHAR(128), NULL)
-    - updated_at: the datetime when the token was last updated (DATETIME, NOT NULL, DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)
-    - created_at: the datetime when the token was created (DATETIME, NOT NULL, DEFAULT CURRENT_TIMESTAMP)
-    
-    The table uses the InnoDB engine and utf8mb4 charset.
+    Garante a existência da tabela 'tokens'.
+    Se MySQL estiver indisponível, não interrompe o fluxo (permite fallback de sessão).
     """
     global _TABLE_READY
     if _TABLE_READY:
         return
+
     sql = """
     CREATE TABLE IF NOT EXISTS tokens (
         company_id VARCHAR(100) PRIMARY KEY,
@@ -44,15 +35,15 @@ def _ensure_table():
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     """
-    # 👇 BLINDAGEM: se o MySQL falhar, apenas registra e deixa o chamador lidar.
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(sql)
-    except OperationalError as e:
-        # Log amigável; não derruba o app aqui.
+        _TABLE_READY = True
+    except OperationalError:
         st.warning("⚠️ Conexão MySQL indisponível no momento (tokens). Tentando fallback de sessão...")
-        raise
+        # ❗ Não levante a exceção aqui — deixe quem chamou usar o fallback.
+        return
 
 def upsert_tokens(
     access_token: str,
@@ -61,32 +52,38 @@ def upsert_tokens(
     state: Optional[str] = None,
     company_id: Optional[str] = None,
 ) -> None:
-    try:
-        # ✅ Não precisamos mais de token na sessão; ca_api garante o Bearer válido.
-        _ensure_table()
-    except OperationalError as e:
-        # Log amigável; não derruba o app aqui.
-        st.warning("⚠️ Conexão MySQL indisponível no momento (tokens). Tentando fallback de sessão...")
-        raise
-
     company_id = company_id or _DEFAULT_COMPANY_ID
+
+    # sempre atualiza fallback de sessão primeiro
     expires_at = datetime.utcnow() + timedelta(seconds=max(60, int(expires_in) - _REFRESH_MARGIN_SEC))
-    sql = """
-    INSERT INTO tokens (company_id, access_token, refresh_token, expires_at, state)
-    VALUES (%s, %s, %s, %s, %s)
-    ON DUPLICATE KEY UPDATE
-        access_token = VALUES(access_token),
-        refresh_token = VALUES(refresh_token),
-        expires_at   = VALUES(expires_at),
-        state        = VALUES(state)
-    """
     try:
+        st.session_state["tokens"] = {
+            "company_id": company_id,
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "expires_at": expires_at,
+        }
+    except Exception:
+        pass
+
+    # tenta persistir no MySQL; se cair, não interrompe o fluxo
+    try:
+        _ensure_table()
+        sql = """
+        INSERT INTO tokens (company_id, access_token, refresh_token, expires_at, state)
+        VALUES (%s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            access_token = VALUES(access_token),
+            refresh_token = VALUES(refresh_token),
+            expires_at   = VALUES(expires_at),
+            state        = VALUES(state)
+        """
         with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, (company_id, access_token, refresh_token, expires_at, state))
-    except OperationalError as e:
-        # Log amigável; não derruba o app aqui.
-        st.warning("⚠️ Conexão MySQL indisponível no momento (tokens). Tentando fallback de sessão...")
+    except Exception as e:
+        st.warning(f"⚠️ Não foi possível persistir tokens no MySQL (usando fallback de sessão). Detalhe: {e}")
+        return
 
 def get_tokens(company_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     company_id = company_id or _DEFAULT_COMPANY_ID

@@ -5,6 +5,7 @@ import uuid
 from utils.token_store import has_valid_token
 from utils.oauth import build_auth_url, exchange_code_for_tokens
 from utils.ca_api import api_get
+from datetime import datetime
 from modules.produto.ui import render_ui as render_produto_ui
 from modules.pessoas.ui import render_ui as render_pessoas_ui
 
