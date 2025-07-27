@@ -136,10 +136,9 @@ class PessoaService:
             "estado": estado or None,
         }
 
-        # país só entra se informado e não-vazio
+        # ✅ Se não mandaram 'pais', assumimos BRASIL para evitar 400.
         pais = (row.get("pais") or "").strip()
-        if pais:
-            end["pais"] = pais
+        end["pais"] = pais if pais else "BRASIL"
 
         # remove chaves None
         end = {k: v for k, v in end.items() if v is not None}
@@ -224,6 +223,10 @@ class PessoaService:
             erros.append("telefone_comercial inválido (use 10 ou 11 dígitos, apenas números).")
         if cel and not self._is_valid_cell(cel):
             erros.append("celular inválido (use 11 dígitos, apenas números).")
+
+        # ✅ normalização extra
+        if tel and len(tel) == 11 and cel and tel == cel:
+            tel = None
 
         # endereços
         enderecos = self._enderecos_from_row(row)
