@@ -36,7 +36,7 @@ def gerar_modelo_excel():
 def render_ui():
     with st.expander("📦 Produto — Importar via Excel"):
         st.markdown("Faça upload de uma planilha `.xlsx` para importar produtos em massa.")
-        st.markdown("✅ A planilha deve conter **colunas obrigatórias** e **alguns campos recomendados**.")
+        st.markdown("A planilha deve conter **colunas obrigatórias** e **alguns campos recomendados**.")
 
         # Botão de download da planilha modelo
         buffer = gerar_modelo_excel()
@@ -47,7 +47,7 @@ def render_ui():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        uploaded_file = st.file_uploader("📤 Enviar planilha Excel", type=["xlsx"])
+        uploaded_file = st.file_uploader("Enviar planilha Excel", type=["xlsx"])
 
         if uploaded_file:
             st.info("📊 Processando arquivo...")
