@@ -10,6 +10,7 @@ import time
 from utils.errors import render_error
 from modules.produto.ui import render_ui as render_produto_ui
 from modules.pessoas.ui import render_ui as render_pessoas_ui
+from modules.vendas.ui import render_ui as render_vendas_ui
 
 st.set_page_config(page_title="Conta Azul MVP", page_icon="📊", layout="wide")
 
@@ -77,6 +78,7 @@ def show_dashboard():
     # ======= MÓDULOS =======
     render_produto_ui()
     render_pessoas_ui()
+    render_vendas_ui()
     # futuramente: render_vendas_ui(), etc.
 
 
