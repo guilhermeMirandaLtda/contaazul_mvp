@@ -11,7 +11,7 @@ from utils.errors import render_error
 from modules.produto.ui import render_ui as render_produto_ui
 from modules.pessoas.ui import render_ui as render_pessoas_ui
 
-st.set_page_config(page_title="Conta Azul MVP", page_icon="💙", layout="wide")
+st.set_page_config(page_title="Conta Azul MVP", page_icon="📊", layout="wide")
 
 def handle_callback():
     qp = st.query_params
@@ -208,7 +208,7 @@ def main():
 
     if not has_valid_token(company_id):
         st.sidebar.warning("Desconectado")
-        st.title("💙 Conectar com a API Conta Azul")
+        st.title("🔑 Conectar com a API Conta Azul")
         st.markdown("Clique no botão abaixo para autorizar o acesso.")
         if "oauth_state" not in st.session_state:
             st.session_state.oauth_state = uuid.uuid4().hex
