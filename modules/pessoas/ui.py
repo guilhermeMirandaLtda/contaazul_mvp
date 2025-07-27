@@ -60,18 +60,33 @@ def _gerar_modelo_excel():
 
 def render_ui():
     with st.expander("👥 Pessoas — Importar via Excel"):
-        st.title("**CADASTRO DE CLIENTE/FORNECEDOR**")
-        st.markdown("**CADASTRO DE CLIENTE/FORNECEDOR**")
-        st.markdown("Envie uma planilha `.xlsx` para **cadastrar pessoas em massa** (clientes/fornecedores).")
-        st.markdown("**Campos obrigatórios:** `tipo` (FISICA/JURIDICA), `nome`, `documento` (CPF/CNPJ).")
-        st.caption("Dica: usamos busca por **termo** (documento/nome) para evitar duplicidade.")
+        st.divider()
+        st.title("**CADASTRO DE CLIENTE/FORNECEDOR**", )
+        st.markdown("""
+            **Descrição:**  
+            Você pode cadastrar pessoas físicas ou jurídicas com perfis de **cliente**, **fornecedor** ou **transportadora**, preenchendo os dados básicos e opcionais.
+
+            **Campos obrigatórios na planilha:**
+            - `tipo` → define o tipo da pessoa (`FISICA`, `JURIDICA` ou `ESTRANGEIRA`)
+            - `nome` → nome completo ou razão social
+            - `documento` → CPF ou CNPJ (somente números)
+
+            **Campos opcionais recomendados:**
+            - `email`, `telefone`, `celular`
+            - `cliente`, `fornecedor` (valores: `sim`, `não`, `1`, `0`, etc.)
+            - `cep`, `logradouro`, `numero`, `bairro`, `cidade`, `estado`, `pais`
+            - `data_nascimento` (formato: `dd/mm/yyyy` ou `yyyy-mm-dd`)
+            - `observacao`, `codigo`, `nome_fantasia`, `inscricao_estadual`, `inscricao_municipal`
+                """)
+        st.caption("Dica: Se um CPF/CNPJ ou nome já estiver cadastrado, ele será automaticamente ignorado.")
 
         # Modelo
         st.download_button(
             "📥 Baixar modelo (Excel)",
             data=_gerar_modelo_excel(),
             file_name="modelo_pessoas.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="tertiary",
         )
 
         up = st.file_uploader("📤 Enviar planilha Excel de Pessoas", type=["xlsx"])
