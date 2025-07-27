@@ -60,7 +60,8 @@ def _gerar_modelo_excel():
 
 def render_ui():
     with st.expander("👥 Pessoas — Importar via Excel"):
-        st.markdown("# **CADASTRO DE CLIENTE/FORNECEDOR**")
+        st.title("**CADASTRO DE CLIENTE/FORNECEDOR**")
+        st.markdown("**CADASTRO DE CLIENTE/FORNECEDOR**")
         st.markdown("Envie uma planilha `.xlsx` para **cadastrar pessoas em massa** (clientes/fornecedores).")
         st.markdown("**Campos obrigatórios:** `tipo` (FISICA/JURIDICA), `nome`, `documento` (CPF/CNPJ).")
         st.caption("Dica: usamos busca por **termo** (documento/nome) para evitar duplicidade.")
