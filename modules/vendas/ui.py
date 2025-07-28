@@ -20,7 +20,7 @@ def render_ui():
 
             **Campos obrigatórios (marcados com *)**
             - **Número***: inteiro (ex.: pode informar "PED-1001" — os dígitos serão extraídos).
-            - **Data da Venda*** (YYYY-MM-DD) • **Situação***: EM_ANDAMENTO ou APROVADO
+            - **Data da Venda*** (YYYY-MM-DD) • **Situação***: EM_ANDAMENTO ou APROVADO .
             - **Tipo do Cliente***: FISICA ou JURIDICA
             - **Nome do Cliente*** • **Documento do Cliente***: CPF (11) / CNPJ (14) — somente dígitos
             - **Tipo do Item*** (PRODUTO/SERVICO) • **Código do Item*** (SKU/código)

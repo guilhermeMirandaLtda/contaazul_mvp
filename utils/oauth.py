@@ -6,7 +6,7 @@ import requests
 from urllib.parse import urlencode
 from streamlit import secrets
 from utils.token_store import upsert_tokens, get_tokens
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import streamlit as st
 AUTH_BASE = "https://auth.contaazul.com/oauth2"
 SCOPES = "openid profile aws.cognito.signin.user.admin"
@@ -110,6 +110,10 @@ def refresh_access_token(company_id: str | None = None) -> dict:
     headers["Content-Type"] = "application/x-www-form-urlencoded"
 
     resp = requests.post(f"{AUTH_BASE}/token", data=data, headers=headers, timeout=30)
+    if resp.status_code == 400 and "invalid_grant" in resp.text:
+        # refresh inválido/rotacionado/revogado
+        raise RuntimeError("Sessão expirada (refresh inválido). Clique em Conectar e faça login novamente.")
+
     resp.raise_for_status()
     payload = resp.json()
 

@@ -2,11 +2,20 @@
 
 import requests
 import streamlit as st
-from utils.token_store import has_valid_token, get_tokens
+from utils.token_store import has_valid_token, get_tokens, get_any_company_id
 from utils.oauth import refresh_access_token
-import datetime
+from datetime import datetime
 
-API_BASE = st.secrets["general"]["API_BASE_URL"]  # defina como https://api-v2.contaazul.com no secrets
+REFRESH_MARGIN_SEC = 60  # renova 60s antes de expirar
+API_BASE = (st.secrets.get("general", {}).get("API_BASE_URL") or "").rstrip("/")  # defina como https://api-v2.contaazul.com no secrets
+
+def _get_company_id_or_fallback():
+    cid = st.session_state.get("company_id")
+    if not cid:
+        cid = get_any_company_id()
+    if not cid:
+        raise RuntimeError("Nenhuma empresa conectada. Clique em Conectar e faça login.")
+    return cid
 
 def _session_token_if_valid() -> str | None:
     at = st.session_state.get("__access_token")
@@ -14,39 +23,56 @@ def _session_token_if_valid() -> str | None:
     if not at or not exp:
         return None
     try:
-        if datetime.utcnow() < datetime.fromisoformat(str(exp)):
+        if datetime.fromisoformat(str(exp)) > datetime.utcnow():
             return at
-    except Exception:
+    except Exception as e:
+        print(f' Error in _session_token_if_valid: {e}')
         return None
     return None
 
-def _ensure_access_token() -> str:
-    company_id = st.session_state.get("company_id")
-
-    # 1) tenta pelo banco (com refresh se preciso)
+def _ensure_access_token() -> tuple[str, str]:
+    company_id = _get_company_id_or_fallback()
+    row = get_tokens(company_id)
+    # tenta renovar se estiver perto de expirar ou inválido
     try:
         if not has_valid_token(company_id):
             refresh_access_token(company_id)
-        row = get_tokens(company_id)
-        if row and row.get("access_token"):
-            return row["access_token"]
+            row = get_tokens(company_id)
     except Exception:
-        # banco falhou; tenta fallback
         pass
+    if row and row.get("access_token"):
+        return company_id, row["access_token"]
 
-    # 2) fallback: cache de sessão
+    # fallback: sessão
     at = _session_token_if_valid()
     if at:
-        return at
+        return company_id, at
 
-    # 3) última tentativa: refresh (se houver company_id)
-    try:
-        payload = refresh_access_token(company_id)
-        return payload["access_token"]
-    except Exception:
-        pass
+    # última tentativa: refresh explícito
+    payload = refresh_access_token(company_id)
+    return company_id, payload["access_token"]
 
-    raise RuntimeError("Token não encontrado. Autentique-se novamente.")
+def _request(method: str, path: str, **kwargs):
+    url = f"{API_BASE}{path}"
+    for attempt in (1, 2):  # 1 chamada + 1 retry após refresh
+        company_id, token = _ensure_access_token()
+        headers = kwargs.pop("headers", {}) or {}
+        headers.setdefault("Accept", "application/json")
+        headers["Authorization"] = f"Bearer {token}"
+        if "json" in kwargs:
+            headers.setdefault("Content-Type", "application/json")
+
+        resp = requests.request(method, url, headers=headers, timeout=30, **kwargs)
+        if resp.status_code == 401 and attempt == 1:
+            # força refresh e tenta de novo
+            refresh_access_token(company_id)
+            continue
+        resp.raise_for_status()
+        return resp
+    raise RuntimeError("Sessão expirada. Clique em Conectar e faça login novamente.")
+
+
+
 
 def api_get(path: str, params: dict | None = None) -> dict:
     token = _ensure_access_token()

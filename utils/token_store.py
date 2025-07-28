@@ -53,6 +53,9 @@ def upsert_tokens(
     company_id: Optional[str] = None,
 ) -> None:
     company_id = company_id or _DEFAULT_COMPANY_ID
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(seconds=int(expires_in))
+    expires_at_ts = int(expires_at.timestamp())
 
     # sempre atualiza fallback de sessão primeiro
     expires_at = datetime.utcnow() + timedelta(seconds=max(60, int(expires_in) - _REFRESH_MARGIN_SEC))
@@ -63,7 +66,8 @@ def upsert_tokens(
             "refresh_token": refresh_token,
             "expires_at": expires_at,
         }
-    except Exception:
+    except Exception as e:
+        st.warning(f"⚠️ Falha ao atualizar fallback de sessão (tokens). Detalhe: {e}")
         pass
 
     # tenta persistir no MySQL; se cair, não interrompe o fluxo
