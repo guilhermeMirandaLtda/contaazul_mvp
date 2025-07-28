@@ -16,21 +16,21 @@ def _modelo_dataframe():
         # PF válida
         {
             "tipo": "FISICA",
-            "nome": "João da Silva",
-            "documento": "12345678909",   # 11 dígitos
-            "email": "joao.silva@example.com",
-            "telefone": "1130023003",
-            "celular": "11988887777",
+            "nome": "Aparecida Emanuelly da Paz",
+            "documento": "36014495797",   # 11 dígitos
+            "email": "aparecida-dapaz85@paginacom.com.br",
+            "telefone": "8628154159",
+            "celular": "86987911399",
             "cliente": "sim",
             "fornecedor": "nao",
-            "cep": "01311000",
-            "logradouro": "Av. Paulista",
-            "numero": "1000",
-            "bairro": "Bela Vista",
-            "cidade": "São Paulo",
-            "estado": "SP",
+            "cep": "64065-150",
+            "logradouro": "Rua Jato Delta",
+            "numero": "755",
+            "bairro": "Pedra Mole",
+            "cidade": "Teresina",
+            "estado": "PI",
             "pais": "Brasil",
-            "data_nascimento": "15/04/1988",
+            "data_nascimento": "08/05/1996",
             "observacao": "PF de teste",
             "codigo": "PF-0001"
         },
